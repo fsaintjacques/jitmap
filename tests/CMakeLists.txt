@@ -1,0 +1,40 @@
+function(unit_test test_name)
+  set(options)
+  set(one_value_args)
+  set(multi_value_args SOURCES)
+  cmake_parse_arguments(ARG "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
+
+  if (ARG_SOURCES)
+    set(SOURCES ${ARG_SOURCES})
+  else()
+    set(SOURCES ${test_name}.cc)
+  endif()
+
+  add_executable(${test_name} ${SOURCES})
+  target_link_libraries(${test_name} jitmap gtest gtest_main gmock)
+  target_compile_options(${test_name} PRIVATE ${CXX_WARNING_FLAGS})
+  add_test(${test_name} ${test_name})
+endfunction()
+
+function(benchmark benchmark_name)
+  set(options)
+  set(one_value_args)
+  set(multi_value_args SOURCES)
+  cmake_parse_arguments(ARG "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
+
+  if (ARG_SOURCES)
+    set(SOURCES ${ARG_SOURCES})
+  else()
+    set(SOURCES ${benchmark_name}.cc)
+  endif()
+
+  add_executable(${benchmark_name} ${SOURCES})
+  target_link_libraries(${benchmark_name} jitmap benchmark benchmark_main)
+  target_compile_options(${benchmark_name} PRIVATE ${CXX_WARNING_FLAGS})
+  add_test(${benchmark_name} ${benchmark_name})
+endfunction()
+
+unit_test(jitmap_test)
+benchmark(jitmap_benchmark)
+
+add_subdirectory(query)
