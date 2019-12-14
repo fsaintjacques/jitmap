@@ -14,8 +14,9 @@ namespace query {
 class LexerTest : public QueryTest {
  protected:
   // Shortcuts
-  auto Index(std::string_view s) { return Token::IndexLit(s); }
-  auto Name(std::string_view s) { return Token::NamedLit(s); }
+  auto Empty() { return Token::Empty(); }
+  auto Full() { return Token::Full(); }
+  auto Var(std::string_view s) { return Token::Var(s); }
   auto Left() { return Token::LeftParen(); }
   auto Right() { return Token::RightParen(); }
   auto Not() { return Token::NotOp(); }
@@ -60,65 +61,67 @@ TEST_F(LexerTest, Basic) {
   ExpectTokenize("()", Left(), Right());
   ExpectTokenize(")(", Right(), Left());
 
-  ExpectTokenize("$0", Index("0"));
-  ExpectTokenize(" $0 ", Index("0"));
-  ExpectTokenize("($0)", Left(), Index("0"), Right());
-  ExpectTokenize("( $0 )", Left(), Index("0"), Right());
+  ExpectTokenize("$0", Empty());
+  ExpectTokenize("0", Var("0"));
+  ExpectTokenize(" $0 ", Empty());
+  ExpectTokenize("($0)", Left(), Empty(), Right());
+  ExpectTokenize("( $0 )", Left(), Empty(), Right());
 
-  ExpectTokenize("a", Name("a"));
-  ExpectTokenize("a ", Name("a"));
-  ExpectTokenize("(a)", Left(), Name("a"), Right());
-  ExpectTokenize(" (a) ", Left(), Name("a"), Right());
+  ExpectTokenize("a", Var("a"));
+  ExpectTokenize("a ", Var("a"));
+  ExpectTokenize("(a)", Left(), Var("a"), Right());
+  ExpectTokenize(" (a) ", Left(), Var("a"), Right());
 
-  ExpectTokenize("($0 | a) ", Left(), Index("0"), Or(), Name("a"), Right());
+  ExpectTokenize("($0 | a) ", Left(), Empty(), Or(), Var("a"), Right());
 
-  ExpectTokenize("($0 | !a) ", Left(), Index("0"), Or(), Not(), Name("a"), Right());
+  ExpectTokenize("($0 | !a) ", Left(), Empty(), Or(), Not(), Var("a"), Right());
 
-  ExpectTokenize(" (a &b & 1)\t", Left(), Name("a"), And(), Name("b"), And(), Name("1"),
+  ExpectTokenize(" (a &b & 1)\t", Left(), Var("a"), And(), Var("b"), And(), Var("1"),
                  Right());
-  ExpectTokenize("(a&b&1) ", Left(), Name("a"), And(), Name("b"), And(), Name("1"),
-                 Right());
+  ExpectTokenize("(a&b&1) ", Left(), Var("a"), And(), Var("b"), And(), Var("1"), Right());
 
-  ExpectTokenize("((a | b) ^ !b) ", Left(), Left(), Name("a"), Or(), Name("b"), Right(),
-                 Xor(), Not(), Name("b"), Right());
+  ExpectTokenize("((a | b) ^ !b) ", Left(), Left(), Var("a"), Or(), Var("b"), Right(),
+                 Xor(), Not(), Var("b"), Right());
 }
 
 TEST_F(LexerTest, Errors) {}
 
 TEST_F(ParserTest, Basic) {
-  ExpectParse("$0", I(0));
-  ExpectParse("a", N("a"));
-  ExpectParse("!a", Not(N("a")));
-  ExpectParse("!!a", Not(Not(N("a"))));
+  ExpectParse("$0", Empty());
+  ExpectParse("0", V("0"));
+  ExpectParse("a", V("a"));
+  ExpectParse("!a", Not(V("a")));
+  ExpectParse("!!a", Not(Not(V("a"))));
 
-  ExpectParse("a & b", And(N("a"), N("b")));
-  ExpectParse("$0 ^ !b", Xor(I(0), Not(N("b"))));
+  ExpectParse("a & b", And(V("a"), V("b")));
+  ExpectParse("$0 ^ !b", Xor(Empty(), Not(V("b"))));
 
-  ExpectParse("(a & b & c) | ($0 & $1 & $2)",
-              Or(And(And(N("a"), N("b")), N("c")), And(And(I(0), I(1)), I(2))));
+  ExpectParse("(a & b & c) | ($0 & $1 & a)",
+              Or(And(And(V("a"), V("b")), V("c")), And(And(Empty(), Full()), Var("a"))));
 }
 
 TEST_F(ParserTest, Parenthesis) {
-  ExpectParse("($1)", I(1));
-  ExpectParse("(((a)))", N("a"));
-  ExpectParse("(!(b))", Not(N("b")));
+  ExpectParse("($1)", Full());
+  ExpectParse("(((a)))", Var("a"));
+  ExpectParse("(!(b))", Not(Var("b")));
 
-  ExpectParse("a & (b | c)", And(N("a"), Or(N("b"), N("c"))));
-  ExpectParse("(a & (b & c))", And(N("a"), And(N("b"), N("c"))));
-  ExpectParse("(a & b) & (c & d)", And(And(N("a"), N("b")), And(N("c"), N("d"))));
+  ExpectParse("a & (b | c)", And(Var("a"), Or(Var("b"), Var("c"))));
+  ExpectParse("(a & (b & c))", And(Var("a"), And(Var("b"), Var("c"))));
+  ExpectParse("(a & b) & (c & d)", And(And(Var("a"), Var("b")), And(Var("c"), Var("d"))));
 }
 
 TEST_F(ParserTest, OperatorPrecedence) {
   // Default precedence
-  ExpectParse("a | !b | c", Or(Or(N("a"), Not(N("b"))), N("c")));
+  ExpectParse("a | !b | c", Or(Or(Var("a"), Not(Var("b"))), Var("c")));
 
   // Not precede over And precede over Xor precede over Or.
-  ExpectParse("!a ^ b & c | d", Or(Xor(Not(N("a")), And(N("b"), N("c"))), N("d")));
-  ExpectParse("a | !b ^ c", Or(N("a"), Xor(Not(N("b")), N("c"))));
-  ExpectParse("a ^ b & !c", Xor(N("a"), And(N("b"), Not(N("c")))));
+  ExpectParse("!a ^ b & c | d",
+              Or(Xor(Not(Var("a")), And(Var("b"), Var("c"))), Var("d")));
+  ExpectParse("a | !b ^ c", Or(Var("a"), Xor(Not(Var("b")), Var("c"))));
+  ExpectParse("a ^ b & !c", Xor(Var("a"), And(Var("b"), Not(Var("c")))));
 
   // Enforce with parenthesis
-  ExpectParse("a ^ b & (c | d)", Xor(N("a"), And(N("b"), Or(N("c"), N("d")))));
+  ExpectParse("a ^ b & (c | d)", Xor(Var("a"), And(Var("b"), Or(Var("c"), Var("d")))));
 }
 
 TEST_F(ParserTest, Errors) {

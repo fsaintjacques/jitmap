@@ -5,7 +5,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <jitmap/query/expr.h>
 #include <jitmap/query/query.h>
+#include <jitmap/query/parser.h>
 
 namespace jitmap {
 namespace query {
@@ -27,11 +29,8 @@ class QueryTest : public testing::Test {
   Expr* Empty() { return expr_builder_.EmptyBitmap(); }
   Expr* Full() { return expr_builder_.FullBitmap(); }
 
-  Expr* N(std::string name) { return expr_builder_.NamedRef(name); }
-  Expr* NamedRef(std::string name) { return expr_builder_.NamedRef(name); }
-
-  Expr* I(size_t index) { return expr_builder_.IndexRef(index); }
-  Expr* IndexRef(size_t index) { return expr_builder_.IndexRef(index); }
+  Expr* V(std::string name) { return expr_builder_.Var(name); }
+  Expr* Var(std::string name) { return expr_builder_.Var(name); }
 
   Expr* Not(Expr* operand) { return expr_builder_.Not(operand); }
 
@@ -45,8 +44,8 @@ class QueryTest : public testing::Test {
 
 ExprBuilder _g_builder_;
 
-Expr* operator"" _(unsigned long long index) { return _g_builder_.IndexRef(index); }
-Expr* operator"" _(const char* name) { return _g_builder_.NamedRef(std::string(name)); }
+Expr* operator"" _v(const char* name) { return _g_builder_.Var(std::string(name)); }
+Expr* operator"" _q(const char* name) { return Parse(name, &_g_builder_); }
 
 }  // namespace query
 }  // namespace jitmap

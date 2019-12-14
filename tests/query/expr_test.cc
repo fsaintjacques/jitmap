@@ -17,41 +17,37 @@ TEST_F(ExprTest, Equals) {
   ExprEq(Full(), &f);
   ExprEq(&e, Empty());
 
-  ExprEq(IndexRef(0), IndexRef(0));
-  ExprNe(IndexRef(1), IndexRef(2));
-
-  ExprEq(NamedRef("a"), NamedRef("a"));
-  ExprNe(NamedRef("b"), NamedRef("c"));
+  ExprEq(Var("a"), Var("a"));
+  ExprNe(Var("b"), Var("c"));
 
   ExprEq(Not(&f), Not(Full()));
   ExprNe(Not(&e), Not(&f));
 
-  ExprEq(And(IndexRef(0), Or(NamedRef("a"), &f)),
-         And(IndexRef(0), Or(NamedRef("a"), &f)));
+  ExprEq(And(Var("0"), Or(Var("a"), &f)), And(Var("0"), Or(Var("a"), &f)));
 }
 
 TEST_F(ExprTest, EqualsNotCommutative) {
   ExprNe(And(Full(), Empty()), And(Empty(), Full()));
 }
 
-using testing::UnorderedElementsAre;
+using testing::ElementsAre;
 
 template <typename... T>
 void ReferencesAre(Expr* expr, T... names) {
-  EXPECT_THAT(expr->CollectReferences(), UnorderedElementsAre(names...));
+  EXPECT_THAT(expr->Variables(), ElementsAre(names...));
 }
 
 template <typename... T>
 void ReferencesAre(const std::string& query, T... names) {
   ExprBuilder builder;
   auto expr = Parse(query, &builder);
-  EXPECT_THAT(expr->CollectReferences(), UnorderedElementsAre(names...));
+  EXPECT_THAT(expr->Variables(), ElementsAre(names...));
 }
 
-TEST_F(ExprTest, CollectReferences) {
-  ReferencesAre("$0", "$0");
-  ReferencesAre("$0 ^ $1", "$0", "$1");
-  ReferencesAre("$0 ^ ($1 | $0)", "$0", "$1");
+TEST_F(ExprTest, Variables) {
+  ReferencesAre("a", "a");
+  ReferencesAre("a ^ b", "a", "b");
+  ReferencesAre("a ^ (b | $0)", "a", "b");
 }
 
 }  // namespace query

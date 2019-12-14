@@ -10,10 +10,12 @@ namespace query {
 
 const char* TokenTypeToString(Token::Type type) {
   switch (type) {
-    case Token::Type::INDEX_LITERAL:
-      return "IndexLiteral";
-    case Token::Type::NAMED_LITERAL:
-      return "NamedLiteral";
+    case Token::Type::EMPTY_LITERAL:
+      return "$0";
+    case Token::Type::FULL_LITERAL:
+      return "$1";
+    case Token::Type::VARIABLE:
+      return "Variable";
     case Token::Type::LEFT_PARENTHESIS:
       return "LeftParenthesis";
     case Token::Type::RIGHT_PARENTHESIS:
@@ -35,8 +37,9 @@ std::ostream& operator<<(std::ostream& os, Token::Type type) {
   return os << TokenTypeToString(type);
 }
 
-Token Token::IndexLit(std::string_view t) { return Token(Token::INDEX_LITERAL, t); }
-Token Token::NamedLit(std::string_view t) { return Token(Token::NAMED_LITERAL, t); }
+Token Token::Empty(std::string_view t) { return Token(Token::EMPTY_LITERAL, t); }
+Token Token::Full(std::string_view t) { return Token(Token::FULL_LITERAL, t); }
+Token Token::Var(std::string_view t) { return Token(Token::VARIABLE, t); }
 Token Token::LeftParen(std::string_view t) { return Token(Token::LEFT_PARENTHESIS, t); }
 Token Token::RightParen(std::string_view t) { return Token(Token::RIGHT_PARENTHESIS, t); }
 Token Token::NotOp(std::string_view t) { return Token(Token::NOT_OPERATOR, t); }
@@ -49,8 +52,7 @@ constexpr char kEoFCharacter = '\0';
 constexpr char kIndefRefCharacter = '$';
 
 static bool IsSpace(char c) { return std::isspace(c); }
-static bool IsDigit(char c) { return std::isdigit(c); }
-static bool IsNamedReference(char c) { return std::isalnum(c) || c == '_'; }
+static bool IsVariable(char c) { return std::isalnum(c) || c == '_'; }
 static bool IsLeftParenthesis(char c) { return c == '('; }
 static bool IsRightParenthesis(char c) { return c == ')'; }
 static bool IsParenthesis(char c) {
@@ -91,25 +93,25 @@ char Lexer::Consume(char expected) {
   return ret;
 }
 
-Token Lexer::ConsumeIndexRef() {
+Token Lexer::ConsumeLiteral() {
   // Pop '$'.
   Consume(kIndefRefCharacter);
 
   size_t start = position_;
-  while (IsDigit(Peek())) {
+  if (Peek() == '0') {
     Consume();
-  };
+    return Token::Empty(query_.substr(start, 0));
+  } else if (Peek() == '1') {
+    Consume();
+    return Token::Full(query_.substr(start, 0));
+  }
 
-  // Expected at least one digit.
-  if (start == position_)
-    throw ParserException("Index reference expects at least one digit");
-
-  return Token::IndexLit(query_.substr(start, position_ - start));
+  throw ParserException("Index reference expects at least one digit");
 }
 
-Token Lexer::ConsumeNamedRef() {
+Token Lexer::ConsumeVariable() {
   size_t start = position_;
-  while (IsNamedReference(Peek())) {
+  while (IsVariable(Peek())) {
     Consume();
   };
 
@@ -117,7 +119,7 @@ Token Lexer::ConsumeNamedRef() {
   if (start == position_)
     throw ParserException("Named reference expects at least one character");
 
-  return Token::NamedLit(query_.substr(start, position_ - start));
+  return Token::Var(query_.substr(start, position_ - start));
 }
 
 Token Lexer::ConsumeOperator() {
@@ -149,30 +151,27 @@ Token Lexer::Next() {
   if (next == kEoFCharacter)
     return Token::EoS();
   else if (next == kIndefRefCharacter)
-    return ConsumeIndexRef();
-  else if (IsNamedReference(next))
-    return ConsumeNamedRef();
+    return ConsumeLiteral();
+  else if (IsVariable(next))
+    return ConsumeVariable();
   else if (IsOperator(next) || IsParenthesis(next))
     return ConsumeOperator();
 
   throw ParserException("Unexpected character '", next, "'.");
 }
 
-static constexpr int kOperatorPrecendenceTable[8] = {
-    [Expr::NOT_OPERATOR] = 4,
-    [Expr::AND_OPERATOR] = 3,
-    [Expr::XOR_OPERATOR] = 2,
-    [Expr::OR_OPERATOR] = 1,
-};
-
-static inline bool IsInfixOperator(const Token& token) {
-  switch (token.type()) {
+int OperatorPrecedence(Token::Type type) {
+  switch (type) {
+    case Token::NOT_OPERATOR:
+      return 4;
     case Token::AND_OPERATOR:
-    case Token::OR_OPERATOR:
+      return 3;
     case Token::XOR_OPERATOR:
-      return true;
+      return 2;
+    case Token::OR_OPERATOR:
+      return 1;
     default:
-      return false;
+      return 0;
   }
 }
 
@@ -216,7 +215,7 @@ class Parser {
     Token token = Consume();
     Expr* left = ParsePrefix(token);
 
-    while (precedence < GetPrecedence()) {
+    while (precedence < OperatorPrecedence(Peek().type())) {
       token = Consume();
       left = ParseInfix(token, left);
     }
@@ -226,12 +225,14 @@ class Parser {
 
   Expr* ParsePrefix(Token token) {
     switch (token.type()) {
-      case Token::INDEX_LITERAL:
-        return builder_->IndexRef(token.string());
-      case Token::NAMED_LITERAL:
-        return builder_->NamedRef(token.string());
+      case Token::EMPTY_LITERAL:
+        return builder_->EmptyBitmap();
+      case Token::FULL_LITERAL:
+        return builder_->FullBitmap();
+      case Token::VARIABLE:
+        return builder_->Var(token.string());
       case Token::NOT_OPERATOR:
-        return builder_->Not(Parse(kOperatorPrecendenceTable[Expr::NOT_OPERATOR]));
+        return builder_->Not(Parse(OperatorPrecedence(Token::NOT_OPERATOR)));
       case Token::LEFT_PARENTHESIS:
         return ParseAndConsume(Token::RIGHT_PARENTHESIS);
       default:
@@ -242,24 +243,14 @@ class Parser {
   Expr* ParseInfix(Token token, Expr* left) {
     switch (token.type()) {
       case Token::AND_OPERATOR:
-        return builder_->And(left, Parse(kOperatorPrecendenceTable[Expr::AND_OPERATOR]));
+        return builder_->And(left, Parse(OperatorPrecedence(Token::AND_OPERATOR)));
       case Token::OR_OPERATOR:
-        return builder_->Or(left, Parse(kOperatorPrecendenceTable[Expr::OR_OPERATOR]));
+        return builder_->Or(left, Parse(OperatorPrecedence(Token::OR_OPERATOR)));
       case Token::XOR_OPERATOR:
-        return builder_->Xor(left, Parse(kOperatorPrecendenceTable[Expr::XOR_OPERATOR]));
+        return builder_->Xor(left, Parse(OperatorPrecedence(Token::XOR_OPERATOR)));
       default:
         throw ParserException("Unexpected token '", token, "'");
     }
-  }
-
-  int GetPrecedence() {
-    Token next_token = Peek();
-
-    if (IsInfixOperator(next_token)) {
-      return kOperatorPrecendenceTable[next_token.type()];
-    }
-
-    return 0;
   }
 
  private:

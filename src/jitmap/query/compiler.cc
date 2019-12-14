@@ -10,6 +10,7 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include "jitmap/query/compiler.h"
 #include "jitmap/query/query.h"
 #include "jitmap/query/type_traits.h"
 
@@ -24,15 +25,20 @@ InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn);
 struct CompilerOptions {
   uint64_t word_size() const { return kBitsPerContainer / scalar_width_; }
 
-  uint8_t vector_width_ = 4;
+  uint8_t vector_width_ = 1;
   uint8_t scalar_width_ = 64;
 };
 
 struct ExprCodeGenVisitor {
-  llvm::Value* operator()(const IndexRefExpr& e) { return bitmaps[e.value()]; }
-  llvm::Value* operator()(const NamedRefExpr& e) { return nullptr; }
-  llvm::Value* operator()(const EmptyBitmapExpr& e) { return nullptr; }
-  llvm::Value* operator()(const FullBitmapExpr& e) { return nullptr; }
+  llvm::Value* operator()(const VariableExpr& e) { return FindBitmapByName(e.value()); }
+
+  llvm::Value* operator()(const EmptyBitmapExpr& e) {
+    return llvm::ConstantInt::get(vector_type, 0UL);
+  }
+
+  llvm::Value* operator()(const FullBitmapExpr& e) {
+    return llvm::ConstantInt::get(vector_type, UINT64_MAX);
+  }
 
   llvm::Value* operator()(const NotOpExpr& e) {
     auto operand = e.operand()->Visit(*this);
@@ -58,8 +64,16 @@ struct ExprCodeGenVisitor {
     return builder.CreateXor(lhs, rhs);
   }
 
-  std::vector<llvm::Value*>& bitmaps;
+  llvm::Value* FindBitmapByName(const std::string& name) {
+    auto result = bitmaps.find(name);
+    if (result == bitmaps.end())
+      throw CompilerException("Referenced bitmap '", name, "' not found.");
+    return result->second;
+  }
+
+  std::unordered_map<std::string, llvm::Value*>& bitmaps;
   llvm::IRBuilder<>& builder;
+  llvm::Type* vector_type;
 };
 
 class QueryCompiler {
@@ -148,7 +162,12 @@ class QueryCompiler {
   }
 
   llvm::Value* ExprCodeGen(std::vector<llvm::Value*>& bitmaps) {
-    return query_.expr().Visit(ExprCodeGenVisitor{bitmaps, builder_});
+    std::unordered_map<std::string, llvm::Value*> keyed_bitmaps;
+    const auto& parameters = query_.parameters();
+    for (size_t i = 0; i < bitmaps.size(); i++) {
+      keyed_bitmaps.emplace(parameters[i], bitmaps[i]);
+    }
+    return query_.expr().Visit(ExprCodeGenVisitor{keyed_bitmaps, builder_, VectorType()});
   }
 
   llvm::FunctionType* FunctionTypeForArguments(size_t n_arguments) {

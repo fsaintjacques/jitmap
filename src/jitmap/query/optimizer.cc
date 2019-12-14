@@ -32,7 +32,7 @@ Expr* ConstantFolding::Rewrite(const Expr& expr) {
       auto unpack_const_expr = [](const BinaryOpExpr& expr) -> std::pair<Expr*, Expr*> {
         auto left = expr.left_operand();
         auto right = expr.right_operand();
-        if (left->IsConstant()) return {left, right};
+        if (left->IsLiteral()) return {left, right};
         return {right, left};
       };
 

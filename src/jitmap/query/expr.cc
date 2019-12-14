@@ -1,5 +1,6 @@
 #include <ostream>
 #include <sstream>
+#include <unordered_set>
 #include <vector>
 
 #include "jitmap/query/matcher.h"
@@ -12,9 +13,8 @@ bool Expr::IsLiteral() const {
   switch (type_) {
     case EMPTY_LITERAL:
     case FULL_LITERAL:
-    case NAMED_REF_LITERAL:
-    case INDEX_REF_LITERAL:
       return true;
+    case VARIABLE:
     case NOT_OPERATOR:
     case AND_OPERATOR:
     case OR_OPERATOR:
@@ -25,14 +25,13 @@ bool Expr::IsLiteral() const {
   return false;
 }
 
-bool Expr::IsConstant() const { return type_ == EMPTY_LITERAL || type_ == FULL_LITERAL; }
+bool Expr::IsVariable() const { return type_ == VARIABLE; }
 
 bool Expr::IsOperator() const {
   switch (type_) {
     case EMPTY_LITERAL:
     case FULL_LITERAL:
-    case NAMED_REF_LITERAL:
-    case INDEX_REF_LITERAL:
+    case VARIABLE:
       return false;
     case NOT_OPERATOR:
     case AND_OPERATOR:
@@ -59,8 +58,8 @@ bool Expr::operator==(const Expr& rhs) const {
     using E = std::decay_t<decltype(left)>;
     const E& right = static_cast<const E&>(rhs);
 
-    if constexpr (is_constant<E>::value) return true;
-    if constexpr (is_reference<E>::value) return left.value() == right.value();
+    if constexpr (is_literal<E>::value) return true;
+    if constexpr (is_variable<E>::value) return left.value() == right.value();
     if constexpr (is_unary_op<E>::value) return *left.operand() == *right.operand();
     if constexpr (is_unary_op<E>::value) return *left.operand() == *right.operand();
     if constexpr (is_binary_op<E>::value) {
@@ -75,13 +74,11 @@ bool Expr::operator==(const Expr& rhs) const {
 static const char* OpToChar(Expr::Type op) {
   switch (op) {
     case Expr::EMPTY_LITERAL:
-      return "∅";
+      return "$0";
     case Expr::FULL_LITERAL:
-      return "⋃";
-    case Expr::NAMED_REF_LITERAL:
+      return "$1";
+    case Expr::VARIABLE:
       return "";
-    case Expr::INDEX_REF_LITERAL:
-      return "$";
     case Expr::NOT_OPERATOR:
       return "!";
     case Expr::AND_OPERATOR:
@@ -101,11 +98,11 @@ std::string Expr::ToString() const {
 
     std::stringstream ss;
 
-    if constexpr (is_constant<E>::value) {
+    if constexpr (is_literal<E>::value) {
       ss << symbol;
     }
 
-    if constexpr (is_reference<E>::value) {
+    if constexpr (is_variable<E>::value) {
       ss << symbol << e.value();
     }
 
@@ -123,26 +120,29 @@ std::string Expr::ToString() const {
   });
 }
 
-static void CollectReferencesRecursive(
-    const Expr& expr, std::unordered_set<std::string>& unique_references) {
-  expr.Visit([&unique_references](const auto& e) {
+static void CollectVariables(const Expr& expr,
+                             std::unordered_set<std::string>& unique_variables,
+                             std::vector<std::string>& variables) {
+  expr.Visit([&unique_variables, &variables](const auto& e) {
     using E = std::decay_t<decltype(e)>;
 
-    if constexpr (is_literal<E>::value) {
-      unique_references.insert(e.ToString());
+    if constexpr (is_variable<E>::value) {
+      auto var = e.value();
+      if (unique_variables.insert(var).second) variables.emplace_back(var);
     } else if constexpr (is_unary_op<E>::value) {
-      CollectReferencesRecursive(*e.operand(), unique_references);
+      CollectVariables(*e.operand(), unique_variables, variables);
     } else if constexpr (is_binary_op<E>::value) {
-      CollectReferencesRecursive(*e.left_operand(), unique_references);
-      CollectReferencesRecursive(*e.right_operand(), unique_references);
+      CollectVariables(*e.left_operand(), unique_variables, variables);
+      CollectVariables(*e.right_operand(), unique_variables, variables);
     }
   });
 }
 
-std::unordered_set<std::string> Expr::CollectReferences() const {
-  std::unordered_set<std::string> unique_references;
-  CollectReferencesRecursive(*this, unique_references);
-  return unique_references;
+std::vector<std::string> Expr::Variables() const {
+  std::unordered_set<std::string> unique_variables;
+  std::vector<std::string> variables;
+  CollectVariables(*this, unique_variables, variables);
+  return variables;
 }
 
 std::ostream& operator<<(std::ostream& os, const Expr& e) { return os << e.ToString(); }

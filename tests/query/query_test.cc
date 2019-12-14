@@ -16,17 +16,14 @@ TEST_F(ExprTest, Equals) {
   ExprEq(Full(), &f);
   ExprEq(&e, Empty());
 
-  ExprEq(IndexRef(0), IndexRef(0));
-  ExprNe(IndexRef(1), IndexRef(2));
-
-  ExprEq(NamedRef("a"), NamedRef("a"));
-  ExprNe(NamedRef("b"), NamedRef("c"));
+  ExprEq(Var("a"), Var("a"));
+  ExprNe(Var("b"), Var("c"));
 
   ExprEq(Not(&f), Not(Full()));
   ExprNe(Not(&e), Not(&f));
 
-  ExprEq(And(IndexRef(0), Or(NamedRef("a"), &f)),
-         And(IndexRef(0), Or(NamedRef("a"), &f)));
+  ExprEq(And(Var("b"), Or(Var("a"), &f)),
+         And(Var("b"), Or(Var("a"), &f)));
 }
 
 TEST_F(ExprTest, EqualsNotCommutative) {

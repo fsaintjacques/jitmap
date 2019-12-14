@@ -9,7 +9,7 @@ namespace query {
 class QueryCompilerTest : public QueryTest {};
 
 TEST_F(QueryCompilerTest, Basic) {
-  auto query = Query::Make("test_query", Not(IndexRef(0)));
+  auto query = Query::Make("test_query", Not(Var("a")));
   Compile(*query);
 }
 

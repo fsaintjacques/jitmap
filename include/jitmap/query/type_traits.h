@@ -14,28 +14,10 @@ template <typename E, typename R = void>
 using enable_if_literal = std::enable_if_t<is_literal<E>::value, R>;
 
 template <typename E>
-using is_constant = std::is_base_of<ConstantExpr, E>;
+using is_variable = std::is_base_of<VariableExpr, E>;
 
 template <typename E, typename R = void>
-using enable_if_constant = std::enable_if_t<is_constant<E>::value, R>;
-
-template <typename E>
-using is_reference = std::is_base_of<ReferenceExpr, E>;
-
-template <typename E, typename R = void>
-using enable_if_reference = std::enable_if_t<is_reference<E>::value, R>;
-
-template <typename E>
-using is_named_ref = std::is_base_of<NamedRefExpr, E>;
-
-template <typename E, typename R = void>
-using enable_if_named_ref = std::enable_if_t<is_named_ref<E>::value, R>;
-
-template <typename E>
-using is_index_ref = std::is_base_of<IndexRefExpr, E>;
-
-template <typename E, typename R = void>
-using enable_if_index_ref = std::enable_if_t<is_index_ref<E>::value, R>;
+using enable_if_variable = std::enable_if_t<is_variable<E>::value, R>;
 
 template <typename E>
 using is_op = std::is_base_of<OpExpr, E>;

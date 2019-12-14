@@ -6,14 +6,10 @@ namespace query {
 class Expr;
 
 class LiteralExpr;
-
-class ConstantExpr;
 class EmptyBitmapExpr;
 class FullBitmapExpr;
 
-class ReferenceExpr;
-class NamedRefExpr;
-class IndexRefExpr;
+class VariableExpr;
 
 class OpExpr;
 

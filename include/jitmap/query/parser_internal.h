@@ -12,8 +12,9 @@ namespace query {
 class Token {
  public:
   enum Type {
-    INDEX_LITERAL,
-    NAMED_LITERAL,
+    EMPTY_LITERAL,
+    FULL_LITERAL,
+    VARIABLE,
     LEFT_PARENTHESIS,
     RIGHT_PARENTHESIS,
     NOT_OPERATOR,
@@ -21,6 +22,7 @@ class Token {
     OR_OPERATOR,
     XOR_OPERATOR,
     END_OF_STREAM,
+    LAST_TOKEN = END_OF_STREAM,
   };
 
   Token(Type type, std::string_view token) : type_(type), string_(std::move(token)) {}
@@ -38,8 +40,9 @@ class Token {
   }
 
   // Friendly builder methods
-  static Token IndexLit(std::string_view);
-  static Token NamedLit(std::string_view);
+  static Token Empty(std::string_view = "");
+  static Token Full(std::string_view = "");
+  static Token Var(std::string_view);
   static Token LeftParen(std::string_view = "");
   static Token RightParen(std::string_view = "");
   static Token NotOp(std::string_view = "");
@@ -67,8 +70,8 @@ class Lexer {
   char Consume();
   char Consume(char expected);
 
-  Token ConsumeIndexRef();
-  Token ConsumeNamedRef();
+  Token ConsumeLiteral();
+  Token ConsumeVariable();
   Token ConsumeOperator();
 
   size_t position_;

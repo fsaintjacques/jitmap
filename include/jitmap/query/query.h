@@ -30,7 +30,7 @@ class Query : public std::enable_shared_from_this<Query> {
   void Optimize();
   void Compile();
 
-  const std::unordered_set<std::string>& parameters() const { return parameters_; }
+  const std::vector<std::string>& parameters() const { return parameters_; }
   const std::string& name() const { return name_; }
   const Expr& expr() const { return *query_; }
 
@@ -39,7 +39,7 @@ class Query : public std::enable_shared_from_this<Query> {
   std::optional<Expr*> optimized_query_;
   Expr* query_;
 
-  std::unordered_set<std::string> parameters_;
+  std::vector<std::string> parameters_;
 
   Query(std::string name, Expr* expr);
 };

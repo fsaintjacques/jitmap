@@ -5,7 +5,7 @@ namespace jitmap {
 namespace query {
 
 Query::Query(std::string name, Expr* expr)
-    : name_(std::move(name)), query_(expr), parameters_(query_->CollectReferences()) {}
+    : name_(std::move(name)), query_(expr), parameters_(query_->Variables()) {}
 
 std::shared_ptr<Query> Query::Make(std::string name, Expr* expr) {
   return std::shared_ptr<Query>(new Query(name, expr));

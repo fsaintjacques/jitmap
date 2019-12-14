@@ -26,15 +26,15 @@ TEST_F(MatcherTest, TypeMatcher) {
 
   TypeMatcher full_and{Expr::FULL_LITERAL, Expr::AND_OPERATOR};
   ExpectMatch(full_and, Full());
-  ExpectMatch(full_and, And(Empty(), IndexRef(2)));
+  ExpectMatch(full_and, And(Empty(), Var("a")));
   ExpectNoMatch(full_and, Empty());
   ExpectNoMatch(full_and, Or(Full(), Full()));
 
   TypeMatcher constant{Expr::FULL_LITERAL, Expr::EMPTY_LITERAL};
   ExpectMatch(constant, Full());
   ExpectMatch(constant, Empty());
-  ExpectNoMatch(constant, NamedRef("a"));
-  ExpectNoMatch(constant, Or(Full(), IndexRef(1)));
+  ExpectNoMatch(constant, Var("a"));
+  ExpectNoMatch(constant, Or(Full(), Var("a")));
 }
 
 TEST_F(MatcherTest, OperandMatcher) {
@@ -44,14 +44,13 @@ TEST_F(MatcherTest, OperandMatcher) {
   // Should only match operators
   ExpectNoMatch(any_constant, Full());
   ExpectNoMatch(any_constant, Empty());
-  ExpectNoMatch(any_constant, NamedRef("a"));
-  ExpectNoMatch(any_constant, IndexRef(0));
+  ExpectNoMatch(any_constant, Var("a"));
 
   ExpectMatch(any_constant, Not(Full()));
-  ExpectMatch(any_constant, Or(Empty(), IndexRef(0)));
-  ExpectMatch(any_constant, And(Not(NamedRef("b")), Full()));
+  ExpectMatch(any_constant, Or(Empty(), Var("a")));
+  ExpectMatch(any_constant, And(Not(Var("b")), Full()));
 
-  ExpectNoMatch(any_constant, Xor(NamedRef("a"), Not(Full())));
+  ExpectNoMatch(any_constant, Xor(Var("a"), Not(Full())));
 }
 
 TEST_F(MatcherTest, ChainMatcher) {
@@ -73,7 +72,7 @@ TEST_F(MatcherTest, ChainMatcher) {
   ExpectMatch(const_matcher, Empty());
   ExpectNoMatch(const_matcher, Not(Empty()));
   ExpectNoMatch(const_matcher, Or(Full(), Empty()));
-  ExpectNoMatch(const_matcher, IndexRef(0));
+  ExpectNoMatch(const_matcher, Var("a"));
 }
 
 }  // namespace query

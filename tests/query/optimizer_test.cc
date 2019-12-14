@@ -11,8 +11,8 @@ class OptimizationTest : public QueryTest {
     ExprEq(p(input), expected);
   }
 
-  Expr* e = And(Or(IndexRef(1), Not(NamedRef("a"))), IndexRef(2));
-  Expr* f = Or(And(IndexRef(0), Not(NamedRef("b"))), IndexRef(1));
+  Expr* e = And(Or(Var("1"), Not(Var("a"))), Var("2"));
+  Expr* f = Or(And(Var("0"), Not(Var("b"))), Var("1"));
 };
 
 TEST_F(OptimizationTest, ConstantFolding) {

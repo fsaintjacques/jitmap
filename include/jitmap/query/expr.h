@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -15,8 +14,7 @@ class Expr {
     // Literals
     EMPTY_LITERAL = 0,
     FULL_LITERAL,
-    NAMED_REF_LITERAL,
-    INDEX_REF_LITERAL,
+    VARIABLE,
 
     // Operators
     NOT_OPERATOR,
@@ -28,7 +26,7 @@ class Expr {
   Type type() const { return type_; }
 
   bool IsLiteral() const;
-  bool IsConstant() const;
+  bool IsVariable() const;
   bool IsOperator() const;
   bool IsUnaryOperator() const;
   bool IsBinaryOperator() const;
@@ -43,7 +41,7 @@ class Expr {
   std::string ToString() const;
 
   // Return all Reference expressions.
-  std::unordered_set<std::string> CollectReferences() const;
+  std::vector<std::string> Variables() const;
 
   virtual ~Expr() {}
 
@@ -63,8 +61,6 @@ class BaseExpr : public Expr {
 };
 
 class LiteralExpr {};
-class ConstantExpr : public LiteralExpr {};
-class ReferenceExpr : public LiteralExpr {};
 class OpExpr {};
 
 class UnaryOpExpr : public OpExpr {
@@ -92,34 +88,20 @@ class BinaryOpExpr : public OpExpr {
 // Literal Expressions
 
 // Represents an empty bitmap (all bits cleared)
-class EmptyBitmapExpr final : public BaseExpr<Expr::EMPTY_LITERAL>,
-                              public ConstantExpr {};
+class EmptyBitmapExpr final : public BaseExpr<Expr::EMPTY_LITERAL>, public LiteralExpr {};
 
 // Represents a full bitmap (all bits set)
-class FullBitmapExpr final : public BaseExpr<Expr::FULL_LITERAL>, public ConstantExpr {};
+class FullBitmapExpr final : public BaseExpr<Expr::FULL_LITERAL>, public LiteralExpr {};
 
 // References a Bitmap by name
-class NamedRefExpr final : public BaseExpr<Expr::NAMED_REF_LITERAL>,
-                           public ReferenceExpr {
+class VariableExpr final : public BaseExpr<Expr::VARIABLE> {
  public:
-  NamedRefExpr(std::string name) : name_(std::move(name)) {}
+  VariableExpr(std::string name) : name_(std::move(name)) {}
 
   const std::string& value() const { return name_; }
 
  private:
   std::string name_;
-};
-
-// References a Bitmap by index
-class IndexRefExpr final : public BaseExpr<Expr::INDEX_REF_LITERAL>,
-                           public ReferenceExpr {
- public:
-  IndexRefExpr(size_t index) : index_(index) {}
-
-  size_t value() const { return index_; }
-
- private:
-  size_t index_;
 };
 
 // Operators
@@ -156,13 +138,8 @@ class ExprBuilder {
     return &full;
   }
 
-  Expr* NamedRef(std::string name) { return Build<NamedRefExpr>(name); }
-  Expr* NamedRef(std::string_view name) { return Build<NamedRefExpr>(std::string(name)); }
-
-  Expr* IndexRef(size_t index) { return Build<IndexRefExpr>(index); }
-  Expr* IndexRef(std::string_view index) {
-    return Build<IndexRefExpr>(std::stoull(index.data()));
-  }
+  Expr* Var(std::string name) { return Build<VariableExpr>(name); }
+  Expr* Var(std::string_view name) { return Build<VariableExpr>(std::string(name)); }
 
   Expr* Not(Expr* expr) { return Build<NotOpExpr>(expr); }
 
@@ -190,10 +167,8 @@ auto Expr::Visit(Visitor&& v) const {
       return v(static_cast<const EmptyBitmapExpr&>(*this));
     case FULL_LITERAL:
       return v(static_cast<const FullBitmapExpr&>(*this));
-    case NAMED_REF_LITERAL:
-      return v(static_cast<const NamedRefExpr&>(*this));
-    case INDEX_REF_LITERAL:
-      return v(static_cast<const IndexRefExpr&>(*this));
+    case VARIABLE:
+      return v(static_cast<const VariableExpr&>(*this));
     case NOT_OPERATOR:
       return v(static_cast<const NotOpExpr&>(*this));
     case AND_OPERATOR:
