@@ -1,5 +1,5 @@
-#include <memory>
 #include <iostream>
+#include <memory>
 
 #include <jitmap/query/compiler.h>
 #include <jitmap/query/parser.h>
@@ -12,12 +12,18 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  ExprBuilder builder;
-  auto expr = Parse(argv[1], &builder);
-  auto query = Query::Make("query", expr);
-  auto compiler = QueryCompiler("jitmap-ir-module", {});
-  compiler.Compile(*query);
-  std::cout << compiler.DumpIR() << "\n";
+  try {
+    ExprBuilder builder;
+    auto expr = Parse(argv[1], &builder);
+    auto query = Query::Make("query", expr);
+    auto compiler = QueryCompiler("jitmap-ir-module", {});
+    compiler.Compile(*query);
+    std::cout << compiler.DumpIR() << "\n";
+  } catch (jitmap::query::ParserException& e) {
+    std::cerr << "Problem parsing '" << argv[1] << "' :\n";
+    std::cerr << "\t" << e.message() << "\n";
+    return 1;
+  }
 
   return 0;
 }

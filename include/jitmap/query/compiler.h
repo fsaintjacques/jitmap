@@ -10,7 +10,7 @@ class Module;
 namespace jitmap {
 namespace query {
 
-class CompilerException : public util::Exception {
+class CompilerException : public Exception {
  public:
   using Exception::Exception;
 };
@@ -37,8 +37,22 @@ class QueryCompiler {
  public:
   QueryCompiler(const std::string& module_name, CompilerOptions options = {});
 
+  // Compile a query expression in an llvm::Function.
+  //
+  // - The query's name must be unique within the QueryCompiler object. It
+  //   always returns the first inserted function irregardless of the
+  //   expression.
+  // - The generated function is not executable as-is, it is only the LLVM IR
+  //   representation.
+  //
+  // \param[in] query, the query to compile into LLVM IR.
+  //
+  // \return an llvm function object
+  //
+  // \throws CompilerExpception if any errors is encountered.
   llvm::Function* Compile(const Query& query);
 
+  // Return the LLVM IR representation of the module and all the compiled queries.
   std::string DumpIR() const;
 
   ~QueryCompiler();

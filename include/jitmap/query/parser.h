@@ -8,7 +8,7 @@
 namespace jitmap {
 namespace query {
 
-class ParserException : public util::Exception {
+class ParserException : public Exception {
  public:
   using Exception::Exception;
 };

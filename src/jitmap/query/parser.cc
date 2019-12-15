@@ -49,7 +49,7 @@ Token Token::XorOp(std::string_view t) { return Token(Token::XOR_OPERATOR, t); }
 Token Token::EoS(std::string_view t) { return Token(Token::END_OF_STREAM, t); }
 
 constexpr char kEoFCharacter = '\0';
-constexpr char kIndefRefCharacter = '$';
+constexpr char kLiteralPrefixCharacter = '$';
 
 static bool IsSpace(char c) { return std::isspace(c); }
 static bool IsVariable(char c) { return std::isalnum(c) || c == '_'; }
@@ -95,7 +95,7 @@ char Lexer::Consume(char expected) {
 
 Token Lexer::ConsumeLiteral() {
   // Pop '$'.
-  Consume(kIndefRefCharacter);
+  Consume(kLiteralPrefixCharacter);
 
   size_t start = position_;
   if (Peek() == '0') {
@@ -106,7 +106,7 @@ Token Lexer::ConsumeLiteral() {
     return Token::Full(query_.substr(start, 0));
   }
 
-  throw ParserException("Index reference expects at least one digit");
+  throw ParserException("Invalid literal character ", Peek());
 }
 
 Token Lexer::ConsumeVariable() {
@@ -150,7 +150,7 @@ Token Lexer::Next() {
   char next = Peek();
   if (next == kEoFCharacter)
     return Token::EoS();
-  else if (next == kIndefRefCharacter)
+  else if (next == kLiteralPrefixCharacter)
     return ConsumeLiteral();
   else if (IsVariable(next))
     return ConsumeVariable();

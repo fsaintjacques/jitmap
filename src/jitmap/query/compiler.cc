@@ -25,6 +25,11 @@ InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn);
 // Generate the hot section of the loop. Takes an expression and reduce it to a
 // single (scalar or vector) value.
 struct ExprCodeGenVisitor {
+ public:
+  std::unordered_map<std::string, llvm::Value*>& bitmaps;
+  llvm::IRBuilder<>& builder;
+  llvm::Type* vector_type;
+
   llvm::Value* operator()(const VariableExpr& e) { return FindBitmapByName(e.value()); }
 
   llvm::Value* operator()(const EmptyBitmapExpr& e) {
@@ -38,10 +43,6 @@ struct ExprCodeGenVisitor {
   llvm::Value* operator()(const NotOpExpr& e) {
     auto operand = e.operand()->Visit(*this);
     return builder.CreateNot(operand);
-  }
-
-  std::pair<llvm::Value*, llvm::Value*> VisitBinary(const BinaryOpExpr& e) {
-    return {e.left_operand()->Visit(*this), e.right_operand()->Visit(*this)};
   }
 
   llvm::Value* operator()(const AndOpExpr& e) {
@@ -59,6 +60,7 @@ struct ExprCodeGenVisitor {
     return builder.CreateXor(lhs, rhs);
   }
 
+ private:
   llvm::Value* FindBitmapByName(const std::string& name) {
     auto result = bitmaps.find(name);
     if (result == bitmaps.end())
@@ -66,9 +68,9 @@ struct ExprCodeGenVisitor {
     return result->second;
   }
 
-  std::unordered_map<std::string, llvm::Value*>& bitmaps;
-  llvm::IRBuilder<>& builder;
-  llvm::Type* vector_type;
+  std::pair<llvm::Value*, llvm::Value*> VisitBinary(const BinaryOpExpr& e) {
+    return {e.left_operand()->Visit(*this), e.right_operand()->Visit(*this)};
+  }
 };
 
 class QueryCompiler::Impl {
@@ -130,26 +132,24 @@ class QueryCompiler::Impl {
       auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
       // Compute the address to load
       auto gep = builder_.CreateInBoundsGEP(bitmap_addr, {loop_idx}, namify("gep"));
-      // Cast previous address as a vector-type.
+      // Cast previous address as a vector-type
       auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), namify("bitcast"));
       // Load in a register
       return builder_.CreateLoad(bitcast, namify("load"));
     };
 
-    std::vector<llvm::Value*> bitmaps;
-    for (size_t i = 0; i < inputs.size(); i++) {
-      bitmaps.push_back(load_vector_inst(inputs[i], i));
-    }
-
-    std::unordered_map<std::string, llvm::Value*> keyed_bitmaps;
+    // Bind the variable bitmaps by name to inputs of the function
     const auto& parameters = query.parameters();
-    for (size_t i = 0; i < bitmaps.size(); i++) {
-      keyed_bitmaps.emplace(parameters[i], bitmaps[i]);
+    std::unordered_map<std::string, llvm::Value*> keyed_bitmaps;
+    for (size_t i = 0; i < inputs.size(); i++) {
+      keyed_bitmaps.emplace(parameters[i], load_vector_inst(inputs[i], i));
     }
 
+    // Execute the expression tree on the input
     ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, VectorType()};
     auto result = query.expr().Visit(visitor);
 
+    // Store the result in the output bitmap.
     auto gep = builder_.CreateInBoundsGEP(output, {loop_idx}, "gep_output");
     auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), "bitcast_output");
     builder_.CreateStore(result, bitcast);
