@@ -9,8 +9,9 @@ namespace query {
 class QueryCompilerTest : public QueryTest {};
 
 TEST_F(QueryCompilerTest, Basic) {
-  auto query = Query::Make("test_query", Not(Var("a")));
-  Compile(*query);
+  auto query = Query::Make("not_a", Not(Var("a")));
+
+  QueryCompiler("my-module", {}).Compile(*query);
 }
 
 }  // namespace query

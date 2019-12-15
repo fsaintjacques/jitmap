@@ -15,7 +15,9 @@ int main(int argc, char** argv) {
   ExprBuilder builder;
   auto expr = Parse(argv[1], &builder);
   auto query = Query::Make("query", expr);
-  std::cout << Compile(*query) << "\n";
+  auto compiler = QueryCompiler("jitmap-ir-module", {});
+  compiler.Compile(*query);
+  std::cout << compiler.DumpIR() << "\n";
 
   return 0;
 }

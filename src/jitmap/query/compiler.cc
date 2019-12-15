@@ -22,13 +22,8 @@ namespace query {
 using InputsOutputArguments = std::pair<std::vector<llvm::Argument*>, llvm::Argument*>;
 InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn);
 
-struct CompilerOptions {
-  uint64_t word_size() const { return kBitsPerContainer / scalar_width_; }
-
-  uint8_t vector_width_ = 1;
-  uint8_t scalar_width_ = 64;
-};
-
+// Generate the hot section of the loop. Takes an expression and reduce it to a
+// single (scalar or vector) value.
 struct ExprCodeGenVisitor {
   llvm::Value* operator()(const VariableExpr& e) { return FindBitmapByName(e.value()); }
 
@@ -76,38 +71,28 @@ struct ExprCodeGenVisitor {
   llvm::Type* vector_type;
 };
 
-class QueryCompiler {
+class QueryCompiler::Impl {
  public:
-  QueryCompiler(Query& query)
-      : query_(query), ctx_(), builder_(ctx_), module_(query_.name(), ctx_) {}
+  Impl(const std::string& module_name, CompilerOptions options)
+      : ctx_(),
+        builder_(ctx_),
+        module_(module_name, ctx_),
+        options_(std::move(options)) {}
 
-  void Compile() {
-    module_.setSourceFileName(query_.expr().ToString());
-    auto fn = FunctionDeclForQuery(query_.parameters().size(), query_.name(), &module_);
+  llvm::Function* Compile(const Query& query) { return FunctionDeclForQuery(query); }
+  llvm::Module* Module() { return &module_; }
+
+ private:
+  void FunctionCodeGen(const Query& query, llvm::Function* fn) {
     auto entry_block = llvm::BasicBlock::Create(ctx_, "entry", fn);
     builder_.SetInsertPoint(entry_block);
 
-    LoopCodeGen(fn);
-
-    builder_.CreateRetVoid();
-  }
-
-  std::string DebugIR() const {
-    std::string buffer;
-    llvm::raw_string_ostream ss{buffer};
-    module_.print(ss, nullptr);
-    return ss.str();
-  }
-
- private:
-  void LoopCodeGen(llvm::Function* fn) {
     // Constants
     auto induction_type = llvm::Type::getInt64Ty(ctx_);
     auto zero = llvm::ConstantInt::get(induction_type, 0);
     auto step = llvm::ConstantInt::get(induction_type, vector_width());
     auto n_words = llvm::ConstantInt::get(induction_type, word_size());
 
-    auto entry_block = builder_.GetInsertBlock();
     auto loop_block = llvm::BasicBlock::Create(ctx_, "loop", fn);
     auto after_block = llvm::BasicBlock::Create(ctx_, "after_loop", fn);
 
@@ -123,7 +108,7 @@ class QueryCompiler {
       auto i = builder_.CreatePHI(induction_type, 2, "i");
       i->addIncoming(zero, entry_block);
 
-      LoopBodyCodeGen(fn, i);
+      LoopBodyCodeGen(query, fn, i);
 
       // i += step
       auto next_i = builder_.CreateAdd(i, step, "next_i");
@@ -134,19 +119,21 @@ class QueryCompiler {
     }
 
     builder_.SetInsertPoint(after_block);
+    builder_.CreateRetVoid();
   }
 
-  void LoopBodyCodeGen(llvm::Function* fn, llvm::Value* loop_var) {
+  void LoopBodyCodeGen(const Query& query, llvm::Function* fn, llvm::Value* loop_idx) {
     auto [inputs, output] = PartitionFunctionArguments(fn);
 
-    auto namify = [](std::string key, size_t i) { return key + "_" + std::to_string(i); };
-
-    auto load_vector_inst = [&](auto input, size_t i) {
-      auto gep = builder_.CreateInBoundsGEP(input, {loop_var}, namify("gep", i));
-      // Cast previous reference as a vector-type.
-      auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), namify("bitcast", i));
-      // Load in a vector register
-      return builder_.CreateLoad(bitcast, namify("load", i));
+    // Load scalar at index for given bitmap
+    auto load_vector_inst = [&](auto bitmap_addr, size_t i) {
+      auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
+      // Compute the address to load
+      auto gep = builder_.CreateInBoundsGEP(bitmap_addr, {loop_idx}, namify("gep"));
+      // Cast previous address as a vector-type.
+      auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), namify("bitcast"));
+      // Load in a register
+      return builder_.CreateLoad(bitcast, namify("load"));
     };
 
     std::vector<llvm::Value*> bitmaps;
@@ -154,20 +141,18 @@ class QueryCompiler {
       bitmaps.push_back(load_vector_inst(inputs[i], i));
     }
 
-    auto result = ExprCodeGen(bitmaps);
-
-    auto gep = builder_.CreateInBoundsGEP(output, {loop_var}, "gep_output");
-    auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), "bitcast_output");
-    builder_.CreateStore(result, bitcast);
-  }
-
-  llvm::Value* ExprCodeGen(std::vector<llvm::Value*>& bitmaps) {
     std::unordered_map<std::string, llvm::Value*> keyed_bitmaps;
-    const auto& parameters = query_.parameters();
+    const auto& parameters = query.parameters();
     for (size_t i = 0; i < bitmaps.size(); i++) {
       keyed_bitmaps.emplace(parameters[i], bitmaps[i]);
     }
-    return query_.expr().Visit(ExprCodeGenVisitor{keyed_bitmaps, builder_, VectorType()});
+
+    ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, VectorType()};
+    auto result = query.expr().Visit(visitor);
+
+    auto gep = builder_.CreateInBoundsGEP(output, {loop_idx}, "gep_output");
+    auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), "bitcast_output");
+    builder_.CreateStore(result, bitcast);
   }
 
   llvm::FunctionType* FunctionTypeForArguments(size_t n_arguments) {
@@ -177,15 +162,17 @@ class QueryCompiler {
     return llvm::FunctionType::get(return_type, argument_types, is_var_args);
   }
 
-  llvm::Function* FunctionDeclForQuery(size_t n_arguments, const std::string& query_name,
-                                       llvm::Module* module) {
+  llvm::Function* FunctionDeclForQuery(const Query& query) {
+    size_t n_arguments = query.parameters().size();
+    auto query_name = query.name();
+
     auto fn_type = FunctionTypeForArguments(n_arguments);
 
     // The generated function will be exposed as an external symbol, i.e the
     // symbol will be globally visible. This would be equivalent to defining a
     // symbol with the `extern` storage classifier.
     auto linkage = llvm::Function::ExternalLinkage;
-    auto fn = llvm::Function::Create(fn_type, linkage, query_name, module);
+    auto fn = llvm::Function::Create(fn_type, linkage, query_name, &module_);
 
     // The generated objects are accessed by taking the symbol address and
     // casting to a function type. Thus, we must use the C calling convention.
@@ -204,6 +191,8 @@ class QueryCompiler {
 
     output->setName("out");
     output->addAttr(llvm::Attribute::NoCapture);
+
+    FunctionCodeGen(query, fn);
 
     return fn;
   }
@@ -224,16 +213,31 @@ class QueryCompiler {
   }
   llvm::Type* VectorPtrType() { return VectorType()->getPointerTo(); }
 
-  uint32_t word_size() const { return options_.word_size(); }
   uint8_t vector_width() const { return options_.vector_width_; }
   uint8_t scalar_width() const { return options_.scalar_width_; }
+  uint32_t word_size() const { return kBitsPerContainer / scalar_width(); }
 
-  Query& query_;
   llvm::LLVMContext ctx_;
   llvm::IRBuilder<> builder_;
   llvm::Module module_;
   CompilerOptions options_;
 };
+
+QueryCompiler::QueryCompiler(const std::string& module_name, CompilerOptions options)
+    : impl_(std::make_unique<QueryCompiler::Impl>(module_name, std::move(options))) {}
+
+llvm::Function* QueryCompiler::Compile(const Query& query) {
+  return impl_->Compile(query);
+}
+
+std::string QueryCompiler::DumpIR() const {
+  std::string buffer;
+  llvm::raw_string_ostream ss{buffer};
+  impl_->Module()->print(ss, nullptr);
+  return ss.str();
+}
+
+QueryCompiler::~QueryCompiler() {}
 
 InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn) {
   InputsOutputArguments io;
@@ -250,12 +254,6 @@ InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn) {
 
   return io;
 }
-
-std::string Compile(Query& query) {
-  QueryCompiler compiler(query);
-  compiler.Compile();
-  return compiler.DebugIR();
-};
 
 }  // namespace query
 }  // namespace jitmap
