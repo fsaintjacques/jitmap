@@ -1,6 +1,7 @@
 #include <memory>
 
 #include <jitmap/query/query.h>
+#include <jitmap/size.h>
 
 namespace llvm {
 class Function;
@@ -28,9 +29,7 @@ struct CompilerOptions {
 
   // Controls the width of each scalar (in bits). See the documentation
   // of your hardware platform for the optimal value.
-  //
-  // LLVM should be able to figure this by default.
-  uint8_t scalar_width_ = 64;
+  uint8_t scalar_width_ = kBytesPerBitsetWord;
 };
 
 class QueryCompiler {

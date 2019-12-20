@@ -14,5 +14,5 @@ target_include_directories(jitmap PUBLIC
   )
 target_compile_options(jitmap PRIVATE ${CXX_WARNING_FLAGS})
 target_include_directories(jitmap PUBLIC ${LLVM_INCLUDE_DIRS})
-llvm_map_components_to_libnames(LLVM_LIBRARIES support core irreader)
+llvm_map_components_to_libnames(LLVM_LIBRARIES support core irreader mcjit)
 target_link_libraries(jitmap ${LLVM_LIBRARIES})

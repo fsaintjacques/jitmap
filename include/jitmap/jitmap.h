@@ -9,10 +9,9 @@
 #include <unordered_map>
 #include <vector>
 
-namespace jitmap {
+#include <jitmap/size.h>
 
-constexpr size_t kLogBitsPerContainer = 16U;
-constexpr size_t kBitsPerContainer = 1UL << kLogBitsPerContainer;
+namespace jitmap {
 
 enum ContainerType : uint8_t {
   BITMAP = 0,
@@ -105,6 +104,8 @@ class BaseContainer : public Container {
   constexpr ContainerType container_type() const { return type; }
 };
 
+using DenseBitset = std::bitset<kBitsPerContainer>;
+
 class DenseContainer final : public BaseContainer<DenseContainer, BITMAP> {
   bool operator[](index_type index) const noexcept { return bitmap_[index]; }
 
@@ -113,7 +114,7 @@ class DenseContainer final : public BaseContainer<DenseContainer, BITMAP> {
     return {0, static_cast<uint16_t>(bitmap_.count())};
   }
 
-  std::bitset<kBitsPerContainer> bitmap_;
+  DenseBitset bitmap_;
 };
 
 class Bitmap {

@@ -19,4 +19,15 @@ class Exception {
   std::string message_;
 };
 
+#define JITMAP_PRE_IMPL_(expr, ...) \
+  do {                              \
+    if (!(expr)) {                  \
+      throw Exception(__VA_ARGS__); \
+    }                               \
+  } while (false)
+
+#define JITMAP_PRE(expr) JITMAP_PRE_IMPL_(expr, "Precondition ", #expr, " not satisfied")
+#define JITMAP_PRE_EQ(left, right) JITMAP_PRE(left == right)
+#define JITMAP_PRE_NE(left, right) JITMAP_PRE(left != right)
+
 }  // namespace jitmap

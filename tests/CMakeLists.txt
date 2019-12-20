@@ -34,6 +34,7 @@ function(benchmark benchmark_name)
   add_test(${benchmark_name} ${benchmark_name})
 endfunction()
 
+unit_test(bitset_test)
 unit_test(jitmap_test)
 benchmark(jitmap_benchmark)
 

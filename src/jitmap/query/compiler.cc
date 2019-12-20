@@ -139,7 +139,7 @@ class QueryCompiler::Impl {
     };
 
     // Bind the variable bitmaps by name to inputs of the function
-    const auto& parameters = query.parameters();
+    const auto& parameters = query.variables();
     std::unordered_map<std::string, llvm::Value*> keyed_bitmaps;
     for (size_t i = 0; i < inputs.size(); i++) {
       keyed_bitmaps.emplace(parameters[i], load_vector_inst(inputs[i], i));
@@ -163,8 +163,7 @@ class QueryCompiler::Impl {
   }
 
   llvm::Function* FunctionDeclForQuery(const Query& query) {
-    size_t n_arguments = query.parameters().size();
-    auto query_name = query.name();
+    size_t n_arguments = query.variables().size();
 
     auto fn_type = FunctionTypeForArguments(n_arguments);
 
@@ -172,7 +171,7 @@ class QueryCompiler::Impl {
     // symbol will be globally visible. This would be equivalent to defining a
     // symbol with the `extern` storage classifier.
     auto linkage = llvm::Function::ExternalLinkage;
-    auto fn = llvm::Function::Create(fn_type, linkage, query_name, &module_);
+    auto fn = llvm::Function::Create(fn_type, linkage, query.name(), &module_);
 
     // The generated objects are accessed by taking the symbol address and
     // casting to a function type. Thus, we must use the C calling convention.
