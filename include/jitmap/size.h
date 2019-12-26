@@ -19,5 +19,6 @@ constexpr size_t kBytesPerContainer = kBitsPerContainer / CHAR_BIT;
 using BitsetWordType = uint32_t;
 constexpr size_t kBytesPerBitsetWord = sizeof(BitsetWordType);
 constexpr size_t kBitsPerBitsetWord = kBytesPerBitsetWord * CHAR_BIT;
+constexpr size_t kWordsPerContainers = kBytesPerContainer / kBytesPerBitsetWord;
 
 }  // namespace jitmap

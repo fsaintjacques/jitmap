@@ -3,6 +3,7 @@
 #include <tuple>
 #include <vector>
 
+#include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -16,11 +17,6 @@
 
 namespace jitmap {
 namespace query {
-
-// Utility to partition function arguments into (inputs, output) pair. The
-// first `n - 1` arguments are input and the last is output.
-using InputsOutputArguments = std::pair<std::vector<llvm::Argument*>, llvm::Argument*>;
-InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn);
 
 // Generate the hot section of the loop. Takes an expression and reduce it to a
 // single (scalar or vector) value.
@@ -73,30 +69,34 @@ struct ExprCodeGenVisitor {
   }
 };
 
-class QueryCompiler::Impl {
+class QueryIRCodeGen::Impl {
  public:
   Impl(const std::string& module_name, CompilerOptions options)
-      : ctx_(),
-        builder_(ctx_),
-        module_(module_name, ctx_),
+      : ctx_(std::make_unique<llvm::LLVMContext>()),
+        module_(std::make_unique<llvm::Module>(module_name, *ctx_)),
+        builder_(*ctx_),
         options_(std::move(options)) {}
 
-  llvm::Function* Compile(const Query& query) { return FunctionDeclForQuery(query); }
-  llvm::Module* Module() { return &module_; }
+  void Compile(const Query& query) { FunctionDeclForQuery(query); }
+
+  ModuleAndContext Finish() { return {std::move(module_), std::move(ctx_)}; }
 
  private:
   void FunctionCodeGen(const Query& query, llvm::Function* fn) {
-    auto entry_block = llvm::BasicBlock::Create(ctx_, "entry", fn);
+    auto entry_block = llvm::BasicBlock::Create(*ctx_, "entry", fn);
     builder_.SetInsertPoint(entry_block);
 
+    // Load bitmaps addresses
+    auto [inputs, output] = UnrollInputsOutput(query.variables().size(), fn);
+
     // Constants
-    auto induction_type = llvm::Type::getInt64Ty(ctx_);
+    auto induction_type = llvm::Type::getInt64Ty(*ctx_);
     auto zero = llvm::ConstantInt::get(induction_type, 0);
     auto step = llvm::ConstantInt::get(induction_type, vector_width());
     auto n_words = llvm::ConstantInt::get(induction_type, word_size());
 
-    auto loop_block = llvm::BasicBlock::Create(ctx_, "loop", fn);
-    auto after_block = llvm::BasicBlock::Create(ctx_, "after_loop", fn);
+    auto loop_block = llvm::BasicBlock::Create(*ctx_, "loop", fn);
+    auto after_block = llvm::BasicBlock::Create(*ctx_, "after_loop", fn);
 
     builder_.CreateBr(loop_block);
     builder_.SetInsertPoint(loop_block);
@@ -110,7 +110,7 @@ class QueryCompiler::Impl {
       auto i = builder_.CreatePHI(induction_type, 2, "i");
       i->addIncoming(zero, entry_block);
 
-      LoopBodyCodeGen(query, fn, i);
+      LoopBodyCodeGen(query, inputs, output, i);
 
       // i += step
       auto next_i = builder_.CreateAdd(i, step, "next_i");
@@ -124,9 +124,30 @@ class QueryCompiler::Impl {
     builder_.CreateRetVoid();
   }
 
-  void LoopBodyCodeGen(const Query& query, llvm::Function* fn, llvm::Value* loop_idx) {
-    auto [inputs, output] = PartitionFunctionArguments(fn);
+  std::pair<std::vector<llvm::Value*>, llvm::Value*> UnrollInputsOutput(
+      size_t n_bitmaps, llvm::Function* fn) {
+    auto args_it = fn->args().begin();
+    auto inputs_ptr = args_it++;
+    auto output_ptr = args_it++;
 
+    // Load scalar at index for given bitmap
+    auto load_bitmap = [&](size_t i) {
+      auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
+      auto bitmap_i = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx_), i);
+      auto gep = builder_.CreateInBoundsGEP(inputs_ptr, bitmap_i, namify("bitmap_gep"));
+      return builder_.CreateLoad(gep, namify("bitmap"));
+    };
+
+    std::vector<llvm::Value*> inputs;
+    for (size_t i = 0; i < n_bitmaps; i++) {
+      inputs.push_back(load_bitmap(i));
+    }
+
+    return {inputs, output_ptr};
+  }
+
+  void LoopBodyCodeGen(const Query& query, std::vector<llvm::Value*> inputs,
+                       llvm::Value* output, llvm::Value* loop_idx) {
     // Load scalar at index for given bitmap
     auto load_vector_inst = [&](auto bitmap_addr, size_t i) {
       auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
@@ -155,23 +176,27 @@ class QueryCompiler::Impl {
     builder_.CreateStore(result, bitcast);
   }
 
-  llvm::FunctionType* FunctionTypeForArguments(size_t n_arguments) {
-    std::vector<llvm::Type*> argument_types{n_arguments + 1, ElementPtrType()};
-    auto return_type = llvm::Type::getVoidTy(ctx_);
+  llvm::FunctionType* FunctionTypeForArguments() {
+    // void
+    auto return_type = llvm::Type::getVoidTy(*ctx_);
+    // dense_fn(
+    // const int32_t** inputs,
+    auto inputs_type = ElementPtrType()->getPointerTo();
+    // int32_t* output,
+    auto output_type = ElementPtrType();
+    // )
+
     constexpr bool is_var_args = false;
-    return llvm::FunctionType::get(return_type, argument_types, is_var_args);
+    return llvm::FunctionType::get(return_type, {inputs_type, output_type}, is_var_args);
   }
 
   llvm::Function* FunctionDeclForQuery(const Query& query) {
-    size_t n_arguments = query.variables().size();
-
-    auto fn_type = FunctionTypeForArguments(n_arguments);
-
+    auto fn_type = FunctionTypeForArguments();
     // The generated function will be exposed as an external symbol, i.e the
     // symbol will be globally visible. This would be equivalent to defining a
     // symbol with the `extern` storage classifier.
     auto linkage = llvm::Function::ExternalLinkage;
-    auto fn = llvm::Function::Create(fn_type, linkage, query.name(), &module_);
+    auto fn = llvm::Function::Create(fn_type, linkage, query.name(), *module_);
 
     // The generated objects are accessed by taking the symbol address and
     // casting to a function type. Thus, we must use the C calling convention.
@@ -179,16 +204,17 @@ class QueryCompiler::Impl {
     // The function will only access memory pointed by the parameter pointers.
     fn->addFnAttr(llvm::Attribute::ArgMemOnly);
 
-    auto [inputs, output] = PartitionFunctionArguments(fn);
-    for (auto input : inputs) {
-      input->setName("in");
-      // The NoCapture attribute indicates that the bitmap pointer
-      // will not be captured (leak outside the function).
-      input->addAttr(llvm::Attribute::NoCapture);
-      input->addAttr(llvm::Attribute::ReadOnly);
-    }
+    auto args_it = fn->args().begin();
+    auto inputs_ptr = args_it++;
+    auto output = args_it++;
 
-    output->setName("out");
+    inputs_ptr->setName("inputs");
+    // The NoCapture attribute indicates that the bitmap pointer
+    // will not be captured (leak outside the function).
+    inputs_ptr->addAttr(llvm::Attribute::NoCapture);
+    inputs_ptr->addAttr(llvm::Attribute::ReadOnly);
+
+    output->setName("output");
     output->addAttr(llvm::Attribute::NoCapture);
 
     FunctionCodeGen(query, fn);
@@ -196,14 +222,7 @@ class QueryCompiler::Impl {
     return fn;
   }
 
-  void SetModuleAttribute(llvm::Module* module, std::string key, std::string value) {
-    using llvm::MDNode;
-    using llvm::MDString;
-    auto named_metadata = module->getOrInsertNamedMetadata("jitmap." + key);
-    named_metadata->addOperand(MDNode::get(ctx_, {MDString::get(ctx_, value)}));
-  }
-
-  llvm::Type* ElementType() { return llvm::Type::getIntNTy(ctx_, scalar_width()); }
+  llvm::Type* ElementType() { return llvm::Type::getIntNTy(*ctx_, scalar_width()); }
   llvm::Type* ElementPtrType() { return ElementType()->getPointerTo(); }
   llvm::Type* VectorType() {
     // Reverts to scalar for debugging purposes.
@@ -212,47 +231,24 @@ class QueryCompiler::Impl {
   }
   llvm::Type* VectorPtrType() { return VectorType()->getPointerTo(); }
 
-  uint8_t vector_width() const { return options_.vector_width_; }
-  uint8_t scalar_width() const { return options_.scalar_width_; }
+  uint8_t vector_width() const { return options_.vector_width; }
+  uint8_t scalar_width() const { return options_.scalar_width; }
   uint32_t word_size() const { return kBitsPerContainer / scalar_width(); }
 
-  llvm::LLVMContext ctx_;
+  std::unique_ptr<llvm::LLVMContext> ctx_;
+  std::unique_ptr<llvm::Module> module_;
   llvm::IRBuilder<> builder_;
-  llvm::Module module_;
   CompilerOptions options_;
 };
 
-QueryCompiler::QueryCompiler(const std::string& module_name, CompilerOptions options)
-    : impl_(std::make_unique<QueryCompiler::Impl>(module_name, std::move(options))) {}
+QueryIRCodeGen::QueryIRCodeGen(const std::string& module_name, CompilerOptions options)
+    : impl_(std::make_unique<QueryIRCodeGen::Impl>(module_name, std::move(options))) {}
+QueryIRCodeGen::QueryIRCodeGen(QueryIRCodeGen&& other) { std::swap(impl_, other.impl_); }
+QueryIRCodeGen::~QueryIRCodeGen() {}
 
-llvm::Function* QueryCompiler::Compile(const Query& query) {
-  return impl_->Compile(query);
-}
+void QueryIRCodeGen::Compile(const Query& query) { impl_->Compile(query); }
 
-std::string QueryCompiler::DumpIR() const {
-  std::string buffer;
-  llvm::raw_string_ostream ss{buffer};
-  impl_->Module()->print(ss, nullptr);
-  return ss.str();
-}
-
-QueryCompiler::~QueryCompiler() {}
-
-InputsOutputArguments PartitionFunctionArguments(llvm::Function* fn) {
-  InputsOutputArguments io;
-
-  size_t arg_size = fn->arg_size();
-  size_t i = 0;
-  for (auto& argument : fn->args()) {
-    if (i++ < arg_size - 1) {
-      io.first.push_back(&argument);
-    } else {
-      io.second = &argument;
-    }
-  }
-
-  return io;
-}
+QueryIRCodeGen::ModuleAndContext QueryIRCodeGen::Finish() && { return impl_->Finish(); }
 
 }  // namespace query
 }  // namespace jitmap

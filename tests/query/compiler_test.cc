@@ -6,12 +6,11 @@
 namespace jitmap {
 namespace query {
 
-class QueryCompilerTest : public QueryTest {};
+class QueryIRCodeGenTest : public QueryTest {};
 
-TEST_F(QueryCompilerTest, Basic) {
+TEST_F(QueryIRCodeGenTest, Basic) {
   auto query = Query::Make("not_a", Not(Var("a")));
-
-  QueryCompiler("my-module", {}).Compile(*query);
+  QueryIRCodeGen("jitmap").Compile(query);
 }
 
 }  // namespace query
