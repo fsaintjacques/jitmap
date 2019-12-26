@@ -1,13 +1,14 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <jitmap/query/expr.h>
-#include <jitmap/query/query.h>
 #include <jitmap/query/parser.h>
+#include <jitmap/query/query.h>
 
 namespace jitmap {
 namespace query {
@@ -37,6 +38,10 @@ class QueryTest : public testing::Test {
   Expr* And(Expr* lhs, Expr* rhs) { return expr_builder_.And(lhs, rhs); }
   Expr* Or(Expr* lhs, Expr* rhs) { return expr_builder_.Or(lhs, rhs); }
   Expr* Xor(Expr* lhs, Expr* rhs) { return expr_builder_.Xor(lhs, rhs); }
+
+  Expr* Parse(std::string_view query) {
+    return jitmap::query::Parse(query, &expr_builder_);
+  }
 
  protected:
   ExprBuilder expr_builder_;

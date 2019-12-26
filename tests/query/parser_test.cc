@@ -47,12 +47,10 @@ class LexerTest : public QueryTest {
 class ParserTest : public QueryTest {
  protected:
   void ExpectParse(std::string_view query, Expr* expected) {
-    ExprEq(Parse(query, &expr_builder_), expected);
+    ExprEq(Parse(query), expected);
   }
 
-  void ExpectThrow(std::string_view query) {
-    EXPECT_ANY_THROW(Parse(query, &expr_builder_));
-  }
+  void ExpectThrow(std::string_view query) { EXPECT_ANY_THROW(Parse(query)); }
 };
 
 TEST_F(LexerTest, Basic) {
