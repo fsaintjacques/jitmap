@@ -21,6 +21,7 @@ typedef void (*DenseEvalFn)(const BitsetWordType**, BitsetWordType*);
 class JitEngine {
  public:
   JitEngine(CompilerOptions options = {});
+  JitEngine(JitEngine&&);
   ~JitEngine();
 
   // Return the LLVM name for the host CPU.
@@ -51,6 +52,8 @@ class JitEngine {
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
+
+  JitEngine(const JitEngine&) = delete;
 };
 
 }  // namespace query

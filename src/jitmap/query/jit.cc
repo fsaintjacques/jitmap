@@ -148,6 +148,7 @@ JitEngine::JitEngine(CompilerOptions opts)
     : impl_(std::make_unique<JitEngine::Impl>(InitHostTargetMachineBuilder(opts), opts)) {
 }
 JitEngine::~JitEngine() {}
+JitEngine::JitEngine(JitEngine&& other) { std::swap(impl_, other.impl_); }
 
 std::string JitEngine::GetTargetCPU() const { return impl_->GetTargetCPU(); }
 std::string JitEngine::GetTargetFeatureString() const {

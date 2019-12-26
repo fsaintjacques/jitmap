@@ -48,6 +48,7 @@ class QueryIRCodeGen {
  public:
   QueryIRCodeGen(const std::string& module_name, CompilerOptions options = {});
   QueryIRCodeGen(QueryIRCodeGen&&);
+  ~QueryIRCodeGen();
 
   // Compile a query expression into the module.
   //
@@ -79,8 +80,6 @@ class QueryIRCodeGen {
   using ModuleAndContext =
       std::pair<std::unique_ptr<llvm::Module>, std::unique_ptr<llvm::LLVMContext>>;
   ModuleAndContext Finish() &&;
-
-  ~QueryIRCodeGen();
 
  private:
   class Impl;
