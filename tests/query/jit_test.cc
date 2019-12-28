@@ -77,6 +77,10 @@ TEST_F(JitTest, CompileAndExecuteTest) {
 
   AssertQueryResult("a & b & c & d & e", {a, b, c, d, e}, a & b & c & d & e);
   AssertQueryResult("a | b | c | d | e", {a, b, c, d, e}, a | b | c | d | e);
+
+  // Complex re-use of inputs
+  AssertQueryResult("(a | b) & (((!a & c) | (d & b)) ^ (!e & b))", {a, b, c, d, e},
+                    (a | b) & (((~a & c) | (d & b)) ^ (~e & b)));
 }
 
 }  // namespace query

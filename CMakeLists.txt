@@ -11,7 +11,7 @@ option(BUILD_TESTS "Builder unit tests" ON)
 option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." ON)
 
 include(CompilerToolchain)
-find_package(LLVM 8 REQUIRED CONFIG)
+find_package(LLVM 9 REQUIRED CONFIG)
 
 add_subdirectory(src/jitmap)
 add_subdirectory(tools)

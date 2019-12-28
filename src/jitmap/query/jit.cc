@@ -1,4 +1,8 @@
+#include <memory>
+
 #include <llvm/ADT/Triple.h>
+#include <llvm/Analysis/TargetTransformInfo.h>
+#include <llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
 #include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
@@ -10,12 +14,13 @@
 #include <llvm/Support/Error.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
-
-#include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/Utils.h>
 #include <llvm/Transforms/Vectorize.h>
 #include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/ExecutionEngine/Orc/ObjectTransformLayer.h"
+#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -81,10 +86,44 @@ auto InitHostTargetMachineBuilder(const CompilerOptions& opts) {
   return machine_builder;
 }
 
-std::unique_ptr<orc::LLJIT> InitLLJIT(orc::JITTargetMachineBuilder builder,
+// Register a custom ObjectLinkerLayer to support (query) symbols with gdb and perf.
+// LLJIT (via ORC) doesn't support explicitly the llvm::JITEventListener
+// interface. This is the missing glue.
+std::unique_ptr<orc::ObjectLayer> ObjectLinkingLayerFactory(
+    orc::ExecutionSession& execution_session) {
+  auto memory_manager_factory = []() {
+    return std::make_unique<llvm::SectionMemoryManager>();
+  };
+
+  auto linking_layer = std::make_unique<orc::RTDyldObjectLinkingLayer>(
+      execution_session, std::move(memory_manager_factory));
+
+  std::vector<llvm::JITEventListener*> listeners{
+      llvm::JITEventListener::createGDBRegistrationListener(),
+      llvm::JITEventListener::createPerfJITEventListener()};
+
+  // Lambda invoked whenever a new symbol is added.
+  auto notify_loaded = [listeners](orc::VModuleKey key,
+                                   const llvm::object::ObjectFile& object,
+                                   const llvm::RuntimeDyld::LoadedObjectInfo& info) {
+    for (auto listener : listeners) {
+      if (listener) listener->notifyObjectLoaded(key, object, info);
+    }
+  };
+
+  linking_layer->setNotifyLoaded(notify_loaded);
+
+  return linking_layer;
+}
+
+std::unique_ptr<orc::LLJIT> InitLLJIT(orc::JITTargetMachineBuilder machine_builder,
                                       llvm::DataLayout layout,
                                       const CompilerOptions& options) {
-  return ExpectOrRaise(orc::LLJIT::Create(builder, layout, options.compiler_threads));
+  return ExpectOrRaise(orc::LLJITBuilder()
+                           .setJITTargetMachineBuilder(machine_builder)
+                           .setNumCompileThreads(options.compiler_threads)
+                           .setObjectLinkingLayerCreator(ObjectLinkingLayerFactory)
+                           .create());
 }
 
 auto AsThreadSafeModule(QueryIRCodeGen::ModuleAndContext module_context) {
