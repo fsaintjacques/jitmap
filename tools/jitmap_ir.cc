@@ -37,9 +37,7 @@ int main(int argc, char** argv) {
   }
 
   try {
-    ExprBuilder builder;
-    auto expr = Parse(argv[1], &builder);
-    auto query = Query::Make("query", expr);
+    auto query = Query::Make("query", argv[1]);
     auto compiler = QueryIRCodeGen("jitmap-ir-module", {});
     compiler.Compile(*query);
     auto [module, ctx] = std::move(compiler).Finish();

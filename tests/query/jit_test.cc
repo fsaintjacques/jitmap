@@ -51,9 +51,9 @@ class JitTest : public QueryTest {
     EXPECT_THAT(output, testing::Each(output_word));
   }
 
-  DenseEvalFn CompileAndLookup(std::string_view query_expr,
+  DenseEvalFn CompileAndLookup(const std::string& query_expr,
                                const std::string& query_name) {
-    auto query = Query::Make(query_name, Parse(query_expr));
+    auto query = Query::Make(query_name, query_expr);
     auto compiler = QueryIRCodeGen("module_" + std::to_string(id++));
     compiler.Compile(query);
     engine_.Compile(std::move(compiler));

@@ -35,8 +35,6 @@ struct NamedData {
 using NamedBitmap = NamedData<Bitmap*>;
 using NamedDenseBitset = NamedData<DenseBitset>;
 
-class QueryContext;
-
 class Query : public std::enable_shared_from_this<Query> {
  public:
   // Create a new query object based on an expression.
@@ -45,30 +43,27 @@ class Query : public std::enable_shared_from_this<Query> {
   // \param[in] expr, the expression of the query
   //
   // \return a new query object
-  static std::shared_ptr<Query> Make(std::string name, Expr* expr);
-
-  // DenseBitset Evaluate(const std::vector<NamedDenseBitset> bitmaps);
-
-  void Optimize();
-  void Compile();
-
-  // Return the names of the referenced bitmap (variables) in the expression.
-  const std::vector<std::string>& variables() const { return variables_; }
+  //
+  // \throws ParserException with a reason why the parsing failed.
+  static std::shared_ptr<Query> Make(std::string name, std::string query);
 
   // Return the name of the query.
-  const std::string& name() const { return name_; }
+  const std::string& name() const;
 
   // Return the expression of the query.
-  const Expr& expr() const { return *query_; }
+  const Expr& expr() const;
+
+  // Return the names of the referenced bitmap (variables) in the expression.
+  const std::vector<std::string>& variables() const;
+
+  ~Query();
 
  private:
-  std::string name_;
-  std::optional<Expr*> optimized_query_;
-  Expr* query_;
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 
-  std::vector<std::string> variables_;
-
-  Query(std::string name, Expr* expr);
+  Query(const Query&) = delete;
+  Query(std::string name, std::string query);
 };
 
 }  // namespace query

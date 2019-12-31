@@ -23,7 +23,7 @@ namespace query {
 class QueryIRCodeGenTest : public QueryTest {};
 
 TEST_F(QueryIRCodeGenTest, Basic) {
-  auto query = Query::Make("not_a", Not(Var("a")));
+  auto query = Query::Make("not_a", "!a");
   QueryIRCodeGen("jitmap").Compile(query);
 }
 

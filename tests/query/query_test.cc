@@ -36,8 +36,7 @@ TEST_F(ExprTest, Equals) {
   ExprEq(Not(&f), Not(Full()));
   ExprNe(Not(&e), Not(&f));
 
-  ExprEq(And(Var("b"), Or(Var("a"), &f)),
-         And(Var("b"), Or(Var("a"), &f)));
+  ExprEq(And(Var("b"), Or(Var("a"), &f)), And(Var("b"), Or(Var("a"), &f)));
 }
 
 TEST_F(ExprTest, EqualsNotCommutative) {
