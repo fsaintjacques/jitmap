@@ -92,7 +92,7 @@ class QueryIRCodeGen::Impl {
     // Constants
     auto induction_type = llvm::Type::getInt64Ty(*ctx_);
     auto zero = llvm::ConstantInt::get(induction_type, 0);
-    auto step = llvm::ConstantInt::get(induction_type, vector_width());
+    auto step = llvm::ConstantInt::get(induction_type, 1);
     auto n_words = llvm::ConstantInt::get(induction_type, word_size());
 
     auto loop_block = llvm::BasicBlock::Create(*ctx_, "loop", fn);
@@ -153,10 +153,8 @@ class QueryIRCodeGen::Impl {
       auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
       // Compute the address to load
       auto gep = builder_.CreateInBoundsGEP(bitmap_addr, {loop_idx}, namify("gep"));
-      // Cast previous address as a vector-type
-      auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), namify("bitcast"));
       // Load in a register
-      return builder_.CreateLoad(bitcast, namify("load"));
+      return builder_.CreateLoad(gep, namify("load"));
     };
 
     // Bind the variable bitmaps by name to inputs of the function
@@ -167,12 +165,12 @@ class QueryIRCodeGen::Impl {
     }
 
     // Execute the expression tree on the input
-    ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, VectorType()};
+    ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, ElementType()};
     auto result = query.expr().Visit(visitor);
 
     // Store the result in the output bitmap.
     auto gep = builder_.CreateInBoundsGEP(output, {loop_idx}, "gep_output");
-    auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), "bitcast_output");
+    auto bitcast = builder_.CreateBitCast(gep, ElementPtrType(), "bitcast_output");
     builder_.CreateStore(result, bitcast);
   }
 
@@ -224,15 +222,8 @@ class QueryIRCodeGen::Impl {
 
   llvm::Type* ElementType() { return llvm::Type::getIntNTy(*ctx_, scalar_width()); }
   llvm::Type* ElementPtrType() { return ElementType()->getPointerTo(); }
-  llvm::Type* VectorType() {
-    // Reverts to scalar for debugging purposes.
-    if (vector_width() == 1) return ElementType();
-    return llvm::VectorType::get(ElementType(), vector_width());
-  }
-  llvm::Type* VectorPtrType() { return VectorType()->getPointerTo(); }
 
-  uint8_t vector_width() const { return options_.vector_width; }
-  uint8_t scalar_width() const { return options_.scalar_width; }
+  uint8_t scalar_width() const { return kBitsPerBitsetWord; }
   uint32_t word_size() const { return kBitsPerContainer / scalar_width(); }
 
   std::unique_ptr<llvm::LLVMContext> ctx_;

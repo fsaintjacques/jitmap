@@ -30,13 +30,6 @@ class JitEngine {
   // http://llvm.org/doxygen/Host_8h_source.html for more information.
   std::string GetTargetCPU() const;
 
-  // Return the LLVM features string for the host CPU.
-  //
-  // An array delimited by comma of symbols referencing a specific cpu feature.
-  // The feature supported are prefixed by `+`, and unsupported by `-`. See
-  // http://llvm.org/doxygen/Host_8h_source.html for more information.
-  std::string GetTargetFeatureString() const;
-
   // Return the LLVM target triple for the host.
   //
   // The format is ARCHITECTURE-VENDOR-OPERATING_SYSTEM-ENVIRONMENT. See

@@ -138,7 +138,7 @@ class ExprBuilder {
     return &full;
   }
 
-  Expr* Var(std::string name) { return Build<VariableExpr>(name); }
+  Expr* Var(const std::string& name) { return Build<VariableExpr>(name); }
   Expr* Var(std::string_view name) { return Build<VariableExpr>(std::string(name)); }
 
   Expr* Not(Expr* expr) { return Build<NotOpExpr>(expr); }

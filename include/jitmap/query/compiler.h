@@ -23,22 +23,15 @@ struct CompilerOptions {
   // will be clamped to 3.
   uint8_t optimization_level = 3;
 
-  // Number of background compiler threads.
-  uint8_t compiler_threads = 0;
-
-  // Controls the number of scalar, i.e. width of the vector aggregate value in
-  // the loop. A value of 1 will emit a scalar value instead of a vector value.
+  // CPU architecture to optimize for. This will dictate the "best" vector
+  // instruction set to compile with. If unspecified or empty, llvm will
+  // auto-detect the host cpu architecture.
   //
-  // Usually a small power of 2, e.g. 1, 2, 4, 8 or 16. See the documentation
-  // of your hardware platform for the optimal value.
-  //
-  // LLVM's optimizer is able to perform the auto-vectorization of the loop. In
-  // cases where it can't, change the vector width here.
-  uint8_t vector_width = 1;
-
-  // Controls the width of each scalar (in bits). See the documentation
-  // of your hardware platform for the optimal value.
-  uint8_t scalar_width = kBitsPerBitsetWord;
+  // Invoke clang with `-mcpu=?` options to get a list of supported strings, e.g.
+  //   - core-avx-i
+  //   - core-avx2
+  //   - skylake-avx512
+  std::string cpu = "";
 };
 
 // The QueryIRCodeGen class generates LLVM IR for query expression on dense

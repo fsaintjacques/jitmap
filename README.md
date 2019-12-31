@@ -38,7 +38,7 @@ a & b
 The *jitmap-ir* tool takes an expression as first input argument and dumps the
 generated LLVM ir to stdout. By default, this will not use vectorized instruction.
 
-```
+```llvm
 # tools/jitmap-ir '(a & b & c & d | e ^ f)'
 ; ModuleID = 'jitmap-ir-module'
 source_filename = "jitmap-ir-module"
@@ -82,7 +82,7 @@ attributes #0 = { argmemonly }
 
 We can then use LLVM's `llc` to transform the IR into native assembly.
 
-```
+```objdump
 # tools/jitmap-ir '(a & b & c & d | e ^ f)' | llc-8 -O3 -mcpu=core-avx2
 ninja: no work to do.
         .text
@@ -127,7 +127,7 @@ query:                                  # @query
 
 This code is still not fully optimized, `opt` is used for this.
 
-```
+```assembly
 # tools/jitmap-ir '(a & b & c & d | e ^ f)' | opt-8 -S -O3 -mcpu=core-avx2 -mtriple=x86_64-unknown-linux-gnu | llc-8 -O3 -mcpu=core-avx2
         .text
         .file   "jitmap-ir-module"

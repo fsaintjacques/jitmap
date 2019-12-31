@@ -62,14 +62,12 @@ llvm::CodeGenOpt::Level CodeGetOptFromNumber(uint8_t level) {
   }
 }
 
-llvm::SubtargetFeatures DetectHostCPUFeatures() {
-  llvm::SubtargetFeatures features;
-  llvm::StringMap<bool> map;
-  llvm::sys::getHostCPUFeatures(map);
-  for (auto& feature : map) {
-    features.AddFeature(feature.first(), feature.second);
+std::string DetectCPU(const CompilerOptions& opts) {
+  if (opts.cpu.empty()) {
+    return llvm::sys::getHostCPUName();
   }
-  return features;
+
+  return opts.cpu;
 }
 
 auto InitHostTargetMachineBuilder(const CompilerOptions& opts) {
@@ -79,9 +77,7 @@ auto InitHostTargetMachineBuilder(const CompilerOptions& opts) {
 
   auto machine_builder = ExpectOrRaise(orc::JITTargetMachineBuilder::detectHost());
   machine_builder.setCodeGenOptLevel(CodeGetOptFromNumber(opts.optimization_level));
-  // In newer LLVM version, cpu and features are detected by detectHost();
-  machine_builder.setCPU(llvm::sys::getHostCPUName());
-  machine_builder.addFeatures(DetectHostCPUFeatures().getFeatures());
+  machine_builder.setCPU(DetectCPU(opts));
 
   return machine_builder;
 }
@@ -121,7 +117,6 @@ std::unique_ptr<orc::LLJIT> InitLLJIT(orc::JITTargetMachineBuilder machine_build
                                       const CompilerOptions& options) {
   return ExpectOrRaise(orc::LLJITBuilder()
                            .setJITTargetMachineBuilder(machine_builder)
-                           .setNumCompileThreads(options.compiler_threads)
                            .setObjectLinkingLayerCreator(ObjectLinkingLayerFactory)
                            .create());
 }
@@ -150,7 +145,6 @@ class JitEngine::Impl {
 
   // Introspection
   std::string GetTargetCPU() const { return host_->getTargetCPU(); }
-  std::string GetTargetFeatureString() const { return host_->getTargetFeatureString(); }
   std::string GetTargetTriple() const { return host_->getTargetTriple().normalize(); }
   const llvm::DataLayout layout() const { return host_->createDataLayout(); }
 
@@ -190,9 +184,6 @@ JitEngine::~JitEngine() {}
 JitEngine::JitEngine(JitEngine&& other) { std::swap(impl_, other.impl_); }
 
 std::string JitEngine::GetTargetCPU() const { return impl_->GetTargetCPU(); }
-std::string JitEngine::GetTargetFeatureString() const {
-  return impl_->GetTargetFeatureString();
-}
 std::string JitEngine::GetTargetTriple() const { return impl_->GetTargetTriple(); }
 
 void JitEngine::Compile(QueryIRCodeGen query) { impl_->AddModule(std::move(query)); }

@@ -53,7 +53,6 @@ class JitTest : public QueryTest {
 
 TEST_F(JitTest, CpuDetection) {
   EXPECT_NE(engine_.GetTargetCPU(), "");
-  EXPECT_NE(engine_.GetTargetFeatureString(), "");
   EXPECT_NE(engine_.GetTargetTriple(), "");
 }
 
