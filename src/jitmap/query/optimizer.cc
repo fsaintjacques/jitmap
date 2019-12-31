@@ -1,4 +1,6 @@
 #include "jitmap/query/optimizer.h"
+
+#include "jitmap/query/expr.h"
 #include "jitmap/query/type_traits.h"
 
 namespace jitmap {
@@ -12,15 +14,15 @@ ConstantFolding::ConstantFolding(ExprBuilder* builder)
     : OptimizationPass(&kConstantOperandMatcher, builder) {}
 
 Expr* ConstantFolding::Rewrite(const Expr& expr) {
-  return expr.Visit([&](const auto& e) -> Expr* {
-    using E = std::decay_t<decltype(e)>;
+  return expr.Visit([&](const auto* e) -> Expr* {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
 
     auto builder = this->builder_;
 
     // Not(0) -> 1
     // Not(1) -> 0
     if constexpr (is_not_op<E>::value) {
-      auto constant = e.operand();
+      auto constant = e->operand();
       auto type = constant->type();
 
       if (type == Expr::EMPTY_LITERAL) return builder->FullBitmap();
@@ -29,9 +31,9 @@ Expr* ConstantFolding::Rewrite(const Expr& expr) {
 
     if constexpr (is_binary_op<E>::value) {
       // Returns a pair where the first element is the constant operand.
-      auto unpack_const_expr = [](const BinaryOpExpr& expr) -> std::pair<Expr*, Expr*> {
-        auto left = expr.left_operand();
-        auto right = expr.right_operand();
+      auto unpack_const_expr = [](const BinaryOpExpr* expr) -> std::pair<Expr*, Expr*> {
+        auto left = expr->left_operand();
+        auto right = expr->right_operand();
         if (left->IsLiteral()) return {left, right};
         return {right, left};
       };
@@ -68,10 +70,10 @@ Expr* ConstantFolding::Rewrite(const Expr& expr) {
 class SameOperandMatcher final : public Matcher {
  public:
   bool Match(const Expr& expr) const {
-    return expr.Visit([](const auto& e) {
-      using E = std::decay_t<decltype(e)>;
+    return expr.Visit([](const auto* e) {
+      using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
       if constexpr (is_binary_op<E>::value) {
-        return e.left_operand() == e.right_operand();
+        return *e->left_operand() == *e->right_operand();
       }
       return false;
     });
@@ -82,17 +84,17 @@ SameOperandFolding::SameOperandFolding(ExprBuilder* builder)
     : OptimizationPass(&kSameOperandMatcher, builder) {}
 
 Expr* SameOperandFolding::Rewrite(const Expr& expr) {
-  return expr.Visit([&](const auto& e) -> Expr* {
-    using E = std::decay_t<decltype(e)>;
+  return expr.Visit([&](const auto* e) -> Expr* {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
 
     // And(e, e) -> e
     if constexpr (is_and_op<E>::value) {
-      return e.left_operand();
+      return e->left_operand();
     }
 
     // Or(e, e) -> e
     if constexpr (is_or_op<E>::value) {
-      return e.left_operand();
+      return e->left_operand();
     }
 
     // Xor(e, e) -> 0
@@ -112,12 +114,12 @@ NotChainFolding::NotChainFolding(ExprBuilder* builder)
     : OptimizationPass(&kNotNotOperandMatcher, builder) {}
 
 Expr* NotChainFolding::Rewrite(const Expr& expr) {
-  return expr.Visit([&](const auto& e) -> Expr* {
-    using E = std::decay_t<decltype(e)>;
+  return expr.Visit([&](const auto* e) -> Expr* {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
 
     if constexpr (is_not_op<E>::value) {
       size_t count = 1;
-      auto operand = e.operand();
+      auto operand = e->operand();
 
       while (operand->type() == Expr::NOT_OPERATOR) {
         count++;
@@ -129,6 +131,62 @@ Expr* NotChainFolding::Rewrite(const Expr& expr) {
 
     return kNoOptimizationPerformed;
   });
+}
+
+Optimizer::Optimizer(ExprBuilder* builder, OptimizerOptions options)
+    : builder_(builder), options_(options) {
+  if (options.HasOptimization(OptimizerOptions::CONSTANT_FOLDING)) {
+    constant_folding_ = ConstantFolding{builder_};
+  }
+
+  if (options.HasOptimization(OptimizerOptions::SAME_OPERAND_FOLDING)) {
+    same_operand_folding_ = SameOperandFolding{builder_};
+  }
+
+  if (options.HasOptimization(OptimizerOptions::NOT_CHAIN_FOLDING)) {
+    not_chain_folding_ = NotChainFolding{builder_};
+  }
+}
+
+// Apply optimizations in a bottom-up fashion, i.e. visit children before parents.
+template <typename Visitor>
+struct BottonUpVisitor {
+  Expr* operator()(VariableExpr* e) { return visitor(e); }
+
+  template <typename E>
+  enable_if_literal<E, Expr*> operator()(E* e) {
+    return visitor(e);
+  }
+
+  template <typename E>
+  enable_if_unary_op<E, Expr*> operator()(E* op) {
+    op->SetOperand((op->operand()->Visit(*this)));
+    return visitor(op);
+  }
+
+  template <typename E>
+  enable_if_binary_op<E, Expr*> operator()(E* op) {
+    op->SetLeftOperand(op->left_operand()->Visit(*this));
+    op->SetRightOperand(op->right_operand()->Visit(*this));
+    return visitor(op);
+  }
+
+  Visitor visitor;
+};
+
+Expr* Optimizer::Optimize(const Expr& input) {
+  auto expr = input.Copy(builder_);
+
+  // Apply folding optimizations
+  auto folder = [this](Expr* e) {
+    if (this->constant_folding_) e = this->constant_folding_.value()(e);
+    if (this->same_operand_folding_) e = this->same_operand_folding_.value()(e);
+    if (this->not_chain_folding_) e = this->not_chain_folding_.value()(e);
+    return e;
+  };
+  BottonUpVisitor<decltype(folder)> folders{std::move(folder)};
+
+  return expr->Visit(folders);
 }
 
 }  // namespace query

@@ -22,24 +22,24 @@ OperandMatcher::OperandMatcher(Matcher* matcher, Mode mode)
     : matcher_(matcher), mode_(mode) {}
 
 bool OperandMatcher::Match(const Expr& expr) const {
-  return expr.Visit([&](const auto& e) {
-    using E = std::decay_t<decltype(e)>;
+  return expr.Visit([&](const auto* e) {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
 
     auto mode = this->mode_;
     auto& matcher = *this->matcher_;
 
-    if constexpr (is_unary_op<E>::value) {
-      return matcher(static_cast<const NotOpExpr&>(e).operand());
+    if constexpr (is_not_op<E>::value) {
+      return matcher(e->operand());
     }
 
     if constexpr (is_binary_op<E>::value) {
-      bool left = matcher(e.left_operand());
+      bool left = matcher(e->left_operand());
 
       // Short-circuit
       if (left && mode == Mode::ANY) return true;
       if (!left && mode == Mode::ALL) return false;
 
-      bool right = matcher(e.right_operand());
+      bool right = matcher(e->right_operand());
       return (mode == Mode::ANY) ? left || right : left && right;
     }
 

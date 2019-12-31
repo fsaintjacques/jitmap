@@ -8,6 +8,8 @@
 namespace jitmap {
 namespace query {
 
+class ExprBuilder;
+
 class Expr {
  public:
   enum Type {
@@ -33,6 +35,8 @@ class Expr {
 
   template <typename Visitor>
   auto Visit(Visitor&& v) const;
+  template <typename Visitor>
+  auto Visit(Visitor&& v);
 
   // Convenience and debug operators
   bool operator==(const Expr& rhs) const;
@@ -43,6 +47,9 @@ class Expr {
   // Return all Reference expressions.
   std::vector<std::string> Variables() const;
 
+  // Copy the expression
+  Expr* Copy(ExprBuilder* builder) const;
+
   virtual ~Expr() {}
 
  protected:
@@ -50,6 +57,7 @@ class Expr {
   Type type_;
 
  private:
+  // Use Copy()
   Expr(const Expr&) = delete;
 };
 
@@ -68,6 +76,7 @@ class UnaryOpExpr : public OpExpr {
   UnaryOpExpr(Expr* expr) : operand_(expr) {}
 
   Expr* operand() const { return operand_; }
+  void SetOperand(Expr* expr) { operand_ = expr; }
 
  protected:
   Expr* operand_;
@@ -78,7 +87,10 @@ class BinaryOpExpr : public OpExpr {
   BinaryOpExpr(Expr* lhs, Expr* rhs) : left_operand_(lhs), right_operand_(rhs) {}
 
   Expr* left_operand() const { return left_operand_; }
+  void SetLeftOperand(Expr* left) { left_operand_ = left; }
+
   Expr* right_operand() const { return right_operand_; }
+  void SetRightOperand(Expr* right) { right_operand_ = right; }
 
  protected:
   Expr* left_operand_;
@@ -164,19 +176,39 @@ template <typename Visitor>
 auto Expr::Visit(Visitor&& v) const {
   switch (type()) {
     case EMPTY_LITERAL:
-      return v(static_cast<const EmptyBitmapExpr&>(*this));
+      return v(static_cast<const EmptyBitmapExpr*>(this));
     case FULL_LITERAL:
-      return v(static_cast<const FullBitmapExpr&>(*this));
+      return v(static_cast<const FullBitmapExpr*>(this));
     case VARIABLE:
-      return v(static_cast<const VariableExpr&>(*this));
+      return v(static_cast<const VariableExpr*>(this));
     case NOT_OPERATOR:
-      return v(static_cast<const NotOpExpr&>(*this));
+      return v(static_cast<const NotOpExpr*>(this));
     case AND_OPERATOR:
-      return v(static_cast<const AndOpExpr&>(*this));
+      return v(static_cast<const AndOpExpr*>(this));
     case OR_OPERATOR:
-      return v(static_cast<const OrOpExpr&>(*this));
+      return v(static_cast<const OrOpExpr*>(this));
     case XOR_OPERATOR:
-      return v(static_cast<const XorOpExpr&>(*this));
+      return v(static_cast<const XorOpExpr*>(this));
+  }
+}
+
+template <typename Visitor>
+auto Expr::Visit(Visitor&& v) {
+  switch (type()) {
+    case EMPTY_LITERAL:
+      return v(static_cast<EmptyBitmapExpr*>(this));
+    case FULL_LITERAL:
+      return v(static_cast<FullBitmapExpr*>(this));
+    case VARIABLE:
+      return v(static_cast<VariableExpr*>(this));
+    case NOT_OPERATOR:
+      return v(static_cast<NotOpExpr*>(this));
+    case AND_OPERATOR:
+      return v(static_cast<AndOpExpr*>(this));
+    case OR_OPERATOR:
+      return v(static_cast<OrOpExpr*>(this));
+    case XOR_OPERATOR:
+      return v(static_cast<XorOpExpr*>(this));
   }
 }
 

@@ -26,32 +26,32 @@ struct ExprCodeGenVisitor {
   llvm::IRBuilder<>& builder;
   llvm::Type* vector_type;
 
-  llvm::Value* operator()(const VariableExpr& e) { return FindBitmapByName(e.value()); }
+  llvm::Value* operator()(const VariableExpr* e) { return FindBitmapByName(e->value()); }
 
-  llvm::Value* operator()(const EmptyBitmapExpr& e) {
+  llvm::Value* operator()(const EmptyBitmapExpr*) {
     return llvm::ConstantInt::get(vector_type, 0UL);
   }
 
-  llvm::Value* operator()(const FullBitmapExpr& e) {
+  llvm::Value* operator()(const FullBitmapExpr*) {
     return llvm::ConstantInt::get(vector_type, UINT64_MAX);
   }
 
-  llvm::Value* operator()(const NotOpExpr& e) {
-    auto operand = e.operand()->Visit(*this);
+  llvm::Value* operator()(const NotOpExpr* e) {
+    auto operand = e->operand()->Visit(*this);
     return builder.CreateNot(operand);
   }
 
-  llvm::Value* operator()(const AndOpExpr& e) {
+  llvm::Value* operator()(const AndOpExpr* e) {
     auto [lhs, rhs] = VisitBinary(e);
     return builder.CreateAnd(lhs, rhs);
   }
 
-  llvm::Value* operator()(const OrOpExpr& e) {
+  llvm::Value* operator()(const OrOpExpr* e) {
     auto [lhs, rhs] = VisitBinary(e);
     return builder.CreateOr(lhs, rhs);
   }
 
-  llvm::Value* operator()(const XorOpExpr& e) {
+  llvm::Value* operator()(const XorOpExpr* e) {
     auto [lhs, rhs] = VisitBinary(e);
     return builder.CreateXor(lhs, rhs);
   }
@@ -64,8 +64,8 @@ struct ExprCodeGenVisitor {
     return result->second;
   }
 
-  std::pair<llvm::Value*, llvm::Value*> VisitBinary(const BinaryOpExpr& e) {
-    return {e.left_operand()->Visit(*this), e.right_operand()->Visit(*this)};
+  std::pair<llvm::Value*, llvm::Value*> VisitBinary(const BinaryOpExpr* e) {
+    return {e->left_operand()->Visit(*this), e->right_operand()->Visit(*this)};
   }
 };
 

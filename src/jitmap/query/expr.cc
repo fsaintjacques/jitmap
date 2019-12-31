@@ -52,19 +52,19 @@ bool Expr::IsBinaryOperator() const {
 bool Expr::operator==(const Expr& rhs) const {
   // Pointer shorcut.
   if (this == &rhs) return true;
-  return this->Visit([&](const auto& left) {
+  return this->Visit([&](const auto* left) {
     if (type() != rhs.type()) return false;
 
-    using E = std::decay_t<decltype(left)>;
-    const E& right = static_cast<const E&>(rhs);
+    using E = std::decay_t<std::remove_pointer_t<decltype(left)>>;
+    const E* right = static_cast<const E*>(&rhs);
 
     if constexpr (is_literal<E>::value) return true;
-    if constexpr (is_variable<E>::value) return left.value() == right.value();
-    if constexpr (is_unary_op<E>::value) return *left.operand() == *right.operand();
-    if constexpr (is_unary_op<E>::value) return *left.operand() == *right.operand();
+    if constexpr (is_variable<E>::value) return left->value() == right->value();
+    if constexpr (is_unary_op<E>::value) return *left->operand() == *right->operand();
+    if constexpr (is_unary_op<E>::value) return *left->operand() == *right->operand();
     if constexpr (is_binary_op<E>::value) {
-      return (*left.left_operand() == *right.left_operand()) &&
-             (*left.right_operand() == *right.right_operand());
+      return (*left->left_operand() == *right->left_operand()) &&
+             (*left->right_operand() == *right->right_operand());
     }
 
     return false;
@@ -91,9 +91,9 @@ static const char* OpToChar(Expr::Type op) {
 }
 
 std::string Expr::ToString() const {
-  return Visit([&](const auto& e) -> std::string {
-    using E = std::decay_t<decltype(e)>;
-    auto type = e.type();
+  return Visit([&](const auto* e) -> std::string {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
+    auto type = e->type();
     auto symbol = OpToChar(type);
 
     std::stringstream ss;
@@ -103,16 +103,16 @@ std::string Expr::ToString() const {
     }
 
     if constexpr (is_variable<E>::value) {
-      ss << symbol << e.value();
+      ss << symbol << e->value();
     }
 
     if constexpr (is_unary_op<E>::value) {
-      ss << symbol << e.operand()->ToString();
+      ss << symbol << e->operand()->ToString();
     }
 
     if constexpr (is_binary_op<E>::value) {
-      auto left = e.left_operand()->ToString();
-      auto right = e.right_operand()->ToString();
+      auto left = e->left_operand()->ToString();
+      auto right = e->right_operand()->ToString();
       ss << "(" << left << " " << symbol << " " << right << ")";
     }
 
@@ -120,20 +120,20 @@ std::string Expr::ToString() const {
   });
 }
 
-static void CollectVariables(const Expr& expr,
+static void CollectVariables(const Expr* expr,
                              std::unordered_set<std::string>& unique_variables,
                              std::vector<std::string>& variables) {
-  expr.Visit([&unique_variables, &variables](const auto& e) {
-    using E = std::decay_t<decltype(e)>;
+  expr->Visit([&unique_variables, &variables](const auto* e) {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
 
     if constexpr (is_variable<E>::value) {
-      auto var = e.value();
+      auto var = e->value();
       if (unique_variables.insert(var).second) variables.emplace_back(var);
     } else if constexpr (is_unary_op<E>::value) {
-      CollectVariables(*e.operand(), unique_variables, variables);
+      CollectVariables(e->operand(), unique_variables, variables);
     } else if constexpr (is_binary_op<E>::value) {
-      CollectVariables(*e.left_operand(), unique_variables, variables);
-      CollectVariables(*e.right_operand(), unique_variables, variables);
+      CollectVariables(e->left_operand(), unique_variables, variables);
+      CollectVariables(e->right_operand(), unique_variables, variables);
     }
   });
 }
@@ -141,8 +141,29 @@ static void CollectVariables(const Expr& expr,
 std::vector<std::string> Expr::Variables() const {
   std::unordered_set<std::string> unique_variables;
   std::vector<std::string> variables;
-  CollectVariables(*this, unique_variables, variables);
+  CollectVariables(this, unique_variables, variables);
   return variables;
+}
+
+Expr* Expr::Copy(ExprBuilder* b) const {
+  return Visit([b](const auto* e) -> Expr* {
+    using E = std::decay_t<std::remove_pointer_t<decltype(e)>>;
+    if constexpr (is_variable<E>::value) {
+      return b->Var(e->value());
+    } else if constexpr (is_literal<E>::value) {
+      return (e->type() == FULL_LITERAL) ? b->FullBitmap() : b->EmptyBitmap();
+    } else if constexpr (is_not_op<E>::value) {
+      return b->Not(e->operand()->Copy(b));
+    } else if constexpr (is_and_op<E>::value) {
+      return b->And(e->left_operand()->Copy(b), e->right_operand()->Copy(b));
+    } else if constexpr (is_or_op<E>::value) {
+      return b->Or(e->left_operand()->Copy(b), e->right_operand()->Copy(b));
+    } else if constexpr (is_xor_op<E>::value) {
+      return b->Xor(e->left_operand()->Copy(b), e->right_operand()->Copy(b));
+    }
+
+    return nullptr;
+  });
 }
 
 std::ostream& operator<<(std::ostream& os, const Expr& e) { return os << e.ToString(); }

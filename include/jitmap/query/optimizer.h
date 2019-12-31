@@ -1,10 +1,14 @@
 #pragma once
 
-#include <jitmap/query/expr.h>
+#include <optional>
+
 #include <jitmap/query/matcher.h>
 
 namespace jitmap {
 namespace query {
+
+class Expr;
+class ExprBuilder;
 
 class OptimizationPass {
  public:
@@ -79,17 +83,38 @@ class NotChainFolding final : public OptimizationPass {
   Expr* Rewrite(const Expr& expr);
 };
 
-class Optimizer {
- public:
-  struct Options {
-    enum Flags : uint64_t {
-      CONSTANT_FOLDING = 1U << 1,
-      SAME_OPERAND_FOLDING = 1U << 2,
-      NOT_CHAIN_FOLDING = 1U << 3,
-    };
+struct OptimizerOptions {
+  enum EnabledOptimizations : uint64_t {
+    CONSTANT_FOLDING = 1U << 1,
+    SAME_OPERAND_FOLDING = 1U << 2,
+    NOT_CHAIN_FOLDING = 1U << 3,
   };
 
+  bool HasOptimization(enum EnabledOptimizations optimization) {
+    return enabled_optimizations & optimization;
+  }
+
+  static constexpr uint64_t kDefaultOptimizations =
+      CONSTANT_FOLDING | SAME_OPERAND_FOLDING | NOT_CHAIN_FOLDING;
+
+  uint64_t enabled_optimizations = kDefaultOptimizations;
+};
+
+class Optimizer {
+ public:
+  Optimizer(ExprBuilder* builder, OptimizerOptions options = {});
+
+  const OptimizerOptions& options() const { return options_; }
+
   Expr* Optimize(const Expr& input);
+
+ private:
+  ExprBuilder* builder_;
+  OptimizerOptions options_;
+
+  std::optional<ConstantFolding> constant_folding_;
+  std::optional<SameOperandFolding> same_operand_folding_;
+  std::optional<NotChainFolding> not_chain_folding_;
 };
 
 }  // namespace query

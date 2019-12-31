@@ -11,8 +11,12 @@ class OptimizationTest : public QueryTest {
     ExprEq(p(input), expected);
   }
 
-  Expr* e = And(Or(Var("1"), Not(Var("a"))), Var("2"));
-  Expr* f = Or(And(Var("0"), Not(Var("b"))), Var("1"));
+  void ExpectOpt(Optimizer& o, Expr* input, Expr* expected) {
+    ExprEq(o.Optimize(*input), expected);
+  }
+
+  Expr* e = Var("e");
+  Expr* f = Or(And(Var("a"), Not(Var("b"))), Var("c"));
 };
 
 TEST_F(OptimizationTest, ConstantFolding) {
@@ -60,6 +64,22 @@ TEST_F(OptimizationTest, NotChainFolding) {
   ExpectOpt(nc, Not(Not(Not(Not(e)))), e);
   ExpectOpt(nc, Not(Not(Not(Not(Not(e))))), Not(e));
   ExpectOpt(nc, Not(Not(Not(Not(Not(Not(e)))))), e);
+}
+
+TEST_F(OptimizationTest, Optimizer) {
+  Optimizer opt(&expr_builder_);
+
+  ExpectOpt(opt, e, e);
+
+  // ConstantFolding
+  ExpectOpt(opt, Not(Full()), Empty());
+  // SameOperandFolding
+  ExpectOpt(opt, And(e, e), e);
+  // NotChainFolding
+  ExpectOpt(opt, Not(Not(e)), e);
+
+  // A mixed bag
+  ExpectOpt(opt, And(e, Or(e, Not(Not(Not(Full()))))), e);
 }
 
 }  // namespace query
