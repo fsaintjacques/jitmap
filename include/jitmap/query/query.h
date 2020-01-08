@@ -16,24 +16,12 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
-#include <jitmap/jitmap.h>
-#include <jitmap/query/expr.h>
-#include <jitmap/query/parser.h>
+#include <jitmap/query/type_fwd.h>
 
 namespace jitmap {
 namespace query {
-
-// Attach a unique name to a bitmap. Used to bind name in the query with a
-// physical bitmap.
-template <typename T>
-struct NamedData {
-  std::string name;
-  T bitmap;
-};
-
-using NamedBitmap = NamedData<Bitmap*>;
-using NamedDenseBitset = NamedData<DenseBitset>;
 
 class Query : public std::enable_shared_from_this<Query> {
  public:

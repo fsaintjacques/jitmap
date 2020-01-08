@@ -15,9 +15,11 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <tuple>
 
-#include <jitmap/query/query.h>
 #include <jitmap/size.h>
+#include <jitmap/util/exception.h>
 
 namespace llvm {
 class LLVMContext;
@@ -48,12 +50,14 @@ struct CompilerOptions {
   std::string cpu = "";
 };
 
+class Query;
+
 // The QueryIRCodeGen class generates LLVM IR for query expression on dense
 // bitmaps. The QueryIRCodeGen is backed by a single llvm::Module where each
 // Query object is represented by a single llvm::Function.
 class QueryIRCodeGen {
  public:
-  QueryIRCodeGen(const std::string& module_name, CompilerOptions options = {});
+  QueryIRCodeGen(const std::string& module_name);
   QueryIRCodeGen(QueryIRCodeGen&&);
   ~QueryIRCodeGen();
 

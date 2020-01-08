@@ -26,6 +26,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "jitmap/query/compiler.h"
+#include "jitmap/query/expr.h"
 #include "jitmap/query/query.h"
 #include "jitmap/query/type_traits.h"
 
@@ -85,11 +86,10 @@ struct ExprCodeGenVisitor {
 
 class QueryIRCodeGen::Impl {
  public:
-  Impl(const std::string& module_name, CompilerOptions options)
+  Impl(const std::string& module_name)
       : ctx_(std::make_unique<llvm::LLVMContext>()),
         module_(std::make_unique<llvm::Module>(module_name, *ctx_)),
-        builder_(*ctx_),
-        options_(std::move(options)) {}
+        builder_(*ctx_) {}
 
   void Compile(const Query& query) { FunctionDeclForQuery(query); }
 
@@ -243,11 +243,10 @@ class QueryIRCodeGen::Impl {
   std::unique_ptr<llvm::LLVMContext> ctx_;
   std::unique_ptr<llvm::Module> module_;
   llvm::IRBuilder<> builder_;
-  CompilerOptions options_;
 };
 
-QueryIRCodeGen::QueryIRCodeGen(const std::string& module_name, CompilerOptions options)
-    : impl_(std::make_unique<QueryIRCodeGen::Impl>(module_name, std::move(options))) {}
+QueryIRCodeGen::QueryIRCodeGen(const std::string& module_name)
+    : impl_(std::make_unique<QueryIRCodeGen::Impl>(module_name)) {}
 QueryIRCodeGen::QueryIRCodeGen(QueryIRCodeGen&& other) { std::swap(impl_, other.impl_); }
 QueryIRCodeGen::~QueryIRCodeGen() {}
 

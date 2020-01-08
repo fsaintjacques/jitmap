@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
 
   try {
     auto query = Query::Make("query", argv[1]);
-    auto compiler = QueryIRCodeGen("jitmap-ir-module", {});
+    auto compiler = QueryIRCodeGen("jitmap-ir-module");
     compiler.Compile(*query);
     auto [module, ctx] = std::move(compiler).Finish();
     std::cout << DumpIR(*module) << "\n";

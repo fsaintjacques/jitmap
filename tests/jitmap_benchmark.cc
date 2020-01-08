@@ -20,6 +20,7 @@
 #include <jitmap/jitmap.h>
 #include <jitmap/query/compiler.h>
 #include <jitmap/query/jit.h>
+#include <jitmap/query/query.h>
 #include <jitmap/size.h>
 
 namespace jitmap {
