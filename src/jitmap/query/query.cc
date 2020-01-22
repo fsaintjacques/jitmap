@@ -18,20 +18,22 @@
 #include <string>
 #include <vector>
 
+#include "jitmap/query/compiler.h"
 #include "jitmap/query/optimizer.h"
 #include "jitmap/query/parser.h"
 
 namespace jitmap {
 namespace query {
 
-class Query::Impl {
+class QueryImpl {
  public:
-  Impl(std::string name, std::string query)
+  QueryImpl(std::string name, std::string query, ExecutionContext* context)
       : name_(std::move(name)),
         query_(std::move(query)),
         expr_(Parse(query_, &builder_)),
         optimized_expr_(Optimizer(&builder_).Optimize(*expr_)),
-        variables_(expr_->Variables()) {}
+        variables_(expr_->Variables()),
+        context_(context) {}
 
   // Accessors
   const std::string& name() const { return name_; }
@@ -39,6 +41,7 @@ class Query::Impl {
   const Expr& expr() const { return *expr_; }
   const Expr& optimized_expr() const { return *optimized_expr_; }
   const std::vector<std::string>& variables() const { return variables_; }
+  DenseEvalFn impl() const { return context_->jit()->LookupUserQuery(name()); }
 
  private:
   std::string name_;
@@ -47,19 +50,25 @@ class Query::Impl {
   Expr* expr_;
   Expr* optimized_expr_;
   std::vector<std::string> variables_;
+  ExecutionContext* context_;
 };
 
-Query::Query(std::string name, std::string query)
-    : impl_(std::make_unique<Impl>(std::move(name), std::move(query))) {}
-Query::~Query() {}
+Query::Query(std::string name, std::string query, ExecutionContext* context)
+    : Pimpl(std::make_unique<QueryImpl>(std::move(name), std::move(query), context)) {}
 
-std::shared_ptr<Query> Query::Make(std::string name, std::string query) {
-  return std::shared_ptr<Query>(new Query(std::move(name), std::move(query)));
+std::shared_ptr<Query> Query::Make(const std::string& name, const std::string& expr,
+                                   ExecutionContext* context) {
+  auto query = std::shared_ptr<Query>(new Query(name, expr, context));
+  if (context != nullptr) {
+    context->jit()->Compile(query->name(), query->expr());
+  }
+
+  return query;
 }
 
-const std::string& Query::name() const { return impl_->name(); }
-const Expr& Query::expr() const { return impl_->expr(); }
-const std::vector<std::string>& Query::variables() const { return impl_->variables(); }
+const std::string& Query::name() const { return impl().name(); }
+const Expr& Query::expr() const { return impl().expr(); }
+const std::vector<std::string>& Query::variables() const { return impl().variables(); }
 
 }  // namespace query
 }  // namespace jitmap

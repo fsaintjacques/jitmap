@@ -74,9 +74,9 @@ class OptimizationPass {
 // Xor(1, e) -> Not(e)
 class ConstantFolding final : public OptimizationPass {
  public:
-  ConstantFolding(ExprBuilder* builder);
+  explicit ConstantFolding(ExprBuilder* builder);
 
-  Expr* Rewrite(const Expr& expr);
+  Expr* Rewrite(const Expr& expr) override;
 };
 
 // And(e, e) -> e
@@ -84,17 +84,17 @@ class ConstantFolding final : public OptimizationPass {
 // Xor(e, e) -> 0
 class SameOperandFolding final : public OptimizationPass {
  public:
-  SameOperandFolding(ExprBuilder* builder);
+  explicit SameOperandFolding(ExprBuilder* builder);
 
-  Expr* Rewrite(const Expr& expr);
+  Expr* Rewrite(const Expr& expr) override;
 };
 
 // Not(Not(Not...(e)...))) -> e or Not(e) depending on occurence
 class NotChainFolding final : public OptimizationPass {
  public:
-  NotChainFolding(ExprBuilder* builder);
+  explicit NotChainFolding(ExprBuilder* builder);
 
-  Expr* Rewrite(const Expr& expr);
+  Expr* Rewrite(const Expr& expr) override;
 };
 
 struct OptimizerOptions {
@@ -105,7 +105,7 @@ struct OptimizerOptions {
   };
 
   bool HasOptimization(enum EnabledOptimizations optimization) {
-    return enabled_optimizations & optimization;
+    return (enabled_optimizations & optimization) != 0;
   }
 
   static constexpr uint64_t kDefaultOptimizations =
@@ -116,7 +116,7 @@ struct OptimizerOptions {
 
 class Optimizer {
  public:
-  Optimizer(ExprBuilder* builder, OptimizerOptions options = {});
+  explicit Optimizer(ExprBuilder* builder, OptimizerOptions options = {});
 
   const OptimizerOptions& options() const { return options_; }
 

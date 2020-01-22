@@ -22,29 +22,21 @@
 #include <jitmap/query/parser.h>
 #include <jitmap/query/query.h>
 
-using namespace jitmap::query;
-
-std::string DumpIR(llvm::Module& module) {
-  std::string buffer;
-  llvm::raw_string_ostream ss{buffer};
-  module.print(ss, nullptr);
-  return ss.str();
-}
+namespace query = jitmap::query;
 
 int main(int argc, char** argv) {
   if (argc != 2) {
     return 1;
   }
 
+  auto query_str = argv[1];
+
   try {
-    auto query = Query::Make("query", argv[1]);
-    auto compiler = QueryIRCodeGen("jitmap-ir-module");
-    compiler.Compile(*query);
-    auto [module, ctx] = std::move(compiler).Finish();
-    std::cout << DumpIR(*module) << "\n";
-    module.reset();
+    auto engine = query::JitEngine::Make();
+    auto query = query::Query::Make("query", query_str, nullptr);
+    std::cout << engine->CompileIR(query->name(), query->expr()) << "\n";
   } catch (jitmap::query::ParserException& e) {
-    std::cerr << "Problem parsing '" << argv[1] << "' :\n";
+    std::cerr << "Problem parsing '" << query_str << "' :\n";
     std::cerr << "\t" << e.message() << "\n";
     return 1;
   }

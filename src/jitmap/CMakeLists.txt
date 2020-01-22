@@ -15,7 +15,6 @@
 set(SOURCES
   query/compiler.cc
   query/expr.cc
-  query/jit.cc
   query/matcher.cc
   query/optimizer.cc
   query/parser.cc

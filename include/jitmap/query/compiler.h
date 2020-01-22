@@ -20,6 +20,7 @@
 
 #include <jitmap/size.h>
 #include <jitmap/util/exception.h>
+#include <jitmap/util/pimpl.h>
 
 namespace llvm {
 class LLVMContext;
@@ -33,6 +34,9 @@ class CompilerException : public Exception {
  public:
   using Exception::Exception;
 };
+
+// Signature of generated functions
+typedef void (*DenseEvalFn)(const BitsetWordType**, BitsetWordType*);
 
 struct CompilerOptions {
   // Controls LLVM optimization level (-O0, -O1, -O2, -O3). Anything above 3
@@ -50,53 +54,64 @@ struct CompilerOptions {
   std::string cpu = "";
 };
 
-class Query;
+class Expr;
 
-// The QueryIRCodeGen class generates LLVM IR for query expression on dense
-// bitmaps. The QueryIRCodeGen is backed by a single llvm::Module where each
-// Query object is represented by a single llvm::Function.
-class QueryIRCodeGen {
+class JitEngineImpl;
+// The JitEngine class transforms IR queries into executable functions.
+class JitEngine : util::Pimpl<JitEngineImpl> {
  public:
-  QueryIRCodeGen(const std::string& module_name);
-  QueryIRCodeGen(QueryIRCodeGen&&);
-  ~QueryIRCodeGen();
+  // Create a JitEngine.
+  //
+  // \param[in] options, see `CompilerOptions` documentation.
+  //
+  // \return a JitEngine
+  static std::shared_ptr<JitEngine> Make(CompilerOptions options = {});
 
   // Compile a query expression into the module.
   //
-  // - The query's name must be unique within the QueryIRCodeGen object.
-  // - The generated function is not executable as-is, it is only the LLVM IR
-  //   representation.
+  // Takes an expression, lowers it to LLVM's IR. Pass the IR module to the
+  // internal jit engine which compiles it into assembly. Inject an executable
+  // function symbol in the current process. See `Lookup` in order to retrieve
+  // a function pointer to this symbol.
   //
-  // \param[in] query, the query to compile into LLVM IR.
+  // \param[in] name, the query name, will be used in the generated symbol name.
+  //                  The name must be unique with regards to previously
+  //                  compiled queries.
+  // \param[in] expr, the query expression.
   //
   // \throws CompilerException if any errors is encountered.
-  void Compile(const Query& query);
+  void Compile(const std::string& name, const Expr& expression);
 
-  // Compile a query expression into the module.
-  template <typename Ptr>
-  void Compile(const Ptr& query) {
-    JITMAP_PRE_NE(query, nullptr);
-    Compile(*query);
-  }
+  // Lower a query expression to LLVM's IR representation.
+  //
+  // This method is used for debugging. An executable symbol is _not_ generated
+  // with this function, see `Compile`.
+  //
+  // \param[in] name, the query name, will be used in the generated symbol name.
+  // \param[in] expr, the query expression.
+  //
+  // \return the IR of the compiled function.
+  //
+  // \throws CompilerException if any errors is encountered.
+  std::string CompileIR(const std::string& name, const Expr& expression);
 
-  // Finalize and consume as a module and context.
+  // Lookup a query
+  DenseEvalFn LookupUserQuery(const std::string& query_name);
+
+  // Return the LLVM name for the host CPU.
   //
-  // The QueryIRCodeGen must be moved to invoke this function, e.g.
+  // This is the string given to `-march/-mtune/-mcpu`. See
+  // http://llvm.org/doxygen/Host_8h_source.html for more information.
+  std::string GetTargetCPU() const;
+
+  // Return the LLVM target triple for the host.
   //
-  //     auto [mod_, ctx_] = std::move(query_compiler).Finish();
-  //
-  // The move is required because the module and context ownership are
-  // transferred to the caller. Instead of resetting the internal state, the
-  // caller must create a new QueryIRCodeGen.
-  using ModuleAndContext =
-      std::pair<std::unique_ptr<llvm::Module>, std::unique_ptr<llvm::LLVMContext>>;
-  ModuleAndContext Finish() &&;
+  // The format is ARCHITECTURE-VENDOR-OPERATING_SYSTEM-ENVIRONMENT. See
+  // http://llvm.org/doxygen/Triple_8h_source.html for more information.
+  std::string GetTargetTriple() const;
 
  private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
-
-  QueryIRCodeGen(const QueryIRCodeGen&) = delete;
+  explicit JitEngine(CompilerOptions options);
 };
 
 }  // namespace query

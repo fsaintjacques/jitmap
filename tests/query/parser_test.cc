@@ -16,9 +16,9 @@
 #include <gtest/gtest.h>
 
 #include <jitmap/query/parser.h>
-#include "jitmap/query/parser_internal.h"
 
 #include "../query_test.h"
+#include "../../src/jitmap/query/parser_internal.h"
 
 using testing::ElementsAre;
 

@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "jitmap/query/parser.h"
 
 #include <string>
 
+#include "jitmap/query/parser.h"
 #include "jitmap/query/expr.h"
-#include "jitmap/query/parser_internal.h"
+
+#include "parser_internal.h"
 
 namespace jitmap {
 namespace query {

@@ -14,7 +14,6 @@
 
 unit_test(query_compiler_test SOURCES compiler_test.cc)
 unit_test(query_expr_test SOURCES expr_test.cc)
-unit_test(query_jit_test SOURCES jit_test.cc)
 unit_test(query_matcher_test SOURCES matcher_test.cc)
 unit_test(query_optimizer_test SOURCES optimizer_test.cc)
 unit_test(query_parser_test SOURCES parser_test.cc)

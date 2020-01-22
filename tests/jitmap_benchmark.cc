@@ -19,7 +19,6 @@
 
 #include <jitmap/jitmap.h>
 #include <jitmap/query/compiler.h>
-#include <jitmap/query/jit.h>
 #include <jitmap/query/query.h>
 #include <jitmap/size.h>
 
@@ -46,12 +45,10 @@ static void JitIntersection2(benchmark::State& state) {
   }
   std::vector<BitsetWordType> output(kWordsPerContainers, 0UL);
 
-  query::JitEngine engine;
-  auto query = query::Query::Make("benchmark_query2", "a & b");
-  auto compiler = query::QueryIRCodeGen("benchmark_module");
-  compiler.Compile(query);
-  engine.Compile(std::move(compiler));
-  auto eval_fn = engine.LookupUserQuery("benchmark_query2");
+  auto engine = query::JitEngine::Make();
+  auto query = query::Query::Make("benchmark_query2", "a & b", nullptr);
+  engine->Compile(query->name(), query->expr());
+  auto eval_fn = engine->LookupUserQuery("benchmark_query2");
 
   for (auto _ : state) {
     eval_fn(inputs.data(), output.data());
@@ -78,12 +75,10 @@ static void JitIntersection3(benchmark::State& state) {
   }
   std::vector<BitsetWordType> output(kWordsPerContainers, 0UL);
 
-  query::JitEngine engine;
-  auto query = query::Query::Make("benchmark_query3", "a & b & c");
-  auto compiler = query::QueryIRCodeGen("benchmark_module");
-  compiler.Compile(query);
-  engine.Compile(std::move(compiler));
-  auto eval_fn = engine.LookupUserQuery("benchmark_query3");
+  auto engine = query::JitEngine::Make();
+  auto query = query::Query::Make("benchmark_query3", "a & b & c", nullptr);
+  engine->Compile(query->name(), query->expr());
+  auto eval_fn = engine->LookupUserQuery("benchmark_query3");
 
   for (auto _ : state) {
     eval_fn(inputs.data(), output.data());

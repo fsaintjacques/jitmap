@@ -12,247 +12,220 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <string>
-#include <string_view>
-#include <tuple>
-#include <vector>
+#include <memory>
 
+#include <llvm/ADT/Triple.h>
+#include <llvm/Analysis/TargetTransformInfo.h>
+#include <llvm/ExecutionEngine/JITEventListener.h>
+#include <llvm/ExecutionEngine/JITSymbol.h>
+#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
+#include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
+#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Type.h>
-#include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Support/CodeGen.h>
+#include <llvm/Support/Error.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Transforms/IPO.h>
+#include <llvm/Transforms/Utils.h>
+#include <llvm/Transforms/Vectorize.h>
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/ExecutionEngine/Orc/ObjectTransformLayer.h"
+#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
 
+#include "codegen.h"
 #include "jitmap/query/compiler.h"
-#include "jitmap/query/expr.h"
-#include "jitmap/query/query.h"
-#include "jitmap/query/type_traits.h"
+
+namespace orc = llvm::orc;
 
 namespace jitmap {
 namespace query {
 
-// Generate the hot section of the loop. Takes an expression and reduce it to a
-// single (scalar or vector) value.
-struct ExprCodeGenVisitor {
+void RaiseOnFailure(llvm::Error error) {
+  if (error) {
+    auto error_msg = llvm::toString(std::move(error));
+    throw CompilerException("LLVM error: ", error_msg);
+  }
+}
+
+template <typename T>
+T ExpectOrRaise(llvm::Expected<T>&& expected) {
+  if (!expected) {
+    RaiseOnFailure(expected.takeError());
+  }
+
+  return std::move(*expected);
+}
+
+llvm::CodeGenOpt::Level CodeGetOptFromNumber(uint8_t level) {
+  switch (level) {
+    case 0:
+      return llvm::CodeGenOpt::None;
+    case 1:
+      return llvm::CodeGenOpt::Less;
+    case 2:
+      return llvm::CodeGenOpt::Default;
+    case 3:
+    default:
+      return llvm::CodeGenOpt::Aggressive;
+  }
+}
+
+std::string DetectCPU(const CompilerOptions& opts) {
+  if (opts.cpu.empty()) {
+    return llvm::sys::getHostCPUName();
+  }
+
+  return opts.cpu;
+}
+
+auto InitHostTargetMachineBuilder(const CompilerOptions& opts) {
+  // Ensure LLVM registries are populated.
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+
+  auto machine_builder = ExpectOrRaise(orc::JITTargetMachineBuilder::detectHost());
+  machine_builder.setCodeGenOptLevel(CodeGetOptFromNumber(opts.optimization_level));
+  machine_builder.setCPU(DetectCPU(opts));
+
+  return machine_builder;
+}
+
+// Register a custom ObjectLinkerLayer to support (query) symbols with gdb and perf.
+// LLJIT (via ORC) doesn't support explicitly the llvm::JITEventListener
+// interface. This is the missing glue.
+std::unique_ptr<orc::ObjectLayer> ObjectLinkingLayerFactory(
+    orc::ExecutionSession& execution_session) {
+  auto memory_manager_factory = []() {
+    return std::make_unique<llvm::SectionMemoryManager>();
+  };
+
+  auto linking_layer = std::make_unique<orc::RTDyldObjectLinkingLayer>(
+      execution_session, std::move(memory_manager_factory));
+
+  std::vector<llvm::JITEventListener*> listeners{
+      llvm::JITEventListener::createGDBRegistrationListener(),
+      llvm::JITEventListener::createPerfJITEventListener()};
+
+  // Lambda invoked whenever a new symbol is added.
+  auto notify_loaded = [listeners](orc::VModuleKey key,
+                                   const llvm::object::ObjectFile& object,
+                                   const llvm::RuntimeDyld::LoadedObjectInfo& info) {
+    for (auto listener : listeners) {
+      if (listener != nullptr) {
+        listener->notifyObjectLoaded(key, object, info);
+      }
+    }
+  };
+
+  linking_layer->setNotifyLoaded(notify_loaded);
+
+  return linking_layer;
+}
+
+std::unique_ptr<orc::LLJIT> InitLLJIT(orc::JITTargetMachineBuilder machine_builder,
+                                      llvm::DataLayout layout,
+                                      const CompilerOptions& options) {
+  return ExpectOrRaise(orc::LLJITBuilder()
+                           .setJITTargetMachineBuilder(machine_builder)
+                           .setObjectLinkingLayerCreator(ObjectLinkingLayerFactory)
+                           .create());
+}
+
+auto AsThreadSafeModule(ExpressionCodeGen::ModuleAndContext module_context) {
+  auto [module, context] = std::move(module_context);
+  return orc::ThreadSafeModule(std::move(module), std::move(context));
+}
+
+class JitEngineImpl {
  public:
-  std::unordered_map<std::string, llvm::Value*>& bitmaps;
-  llvm::IRBuilder<>& builder;
-  llvm::Type* vector_type;
+  JitEngineImpl(orc::JITTargetMachineBuilder machine_builder, const CompilerOptions& opts)
+      : host_(ExpectOrRaise(machine_builder.createTargetMachine())),
+        jit_(InitLLJIT(machine_builder, host_->createDataLayout(), opts)),
+        user_queries_(jit_->createJITDylib("jitmap.user")) {}
 
-  llvm::Value* operator()(const VariableExpr* e) { return FindBitmapByName(e->value()); }
-
-  llvm::Value* operator()(const EmptyBitmapExpr*) {
-    return llvm::ConstantInt::get(vector_type, 0UL);
+  void Compile(const std::string& name, const Expr& expr) {
+    auto module_ctx = ExpressionCodeGen("module_a").Compile(name, expr).Finish();
+    auto module = Optimize(AsThreadSafeModule(std::move(module_ctx)));
+    RaiseOnFailure(jit_->addIRModule(user_queries_, std::move(module)));
   }
 
-  llvm::Value* operator()(const FullBitmapExpr*) {
-    return llvm::ConstantInt::get(vector_type, UINT64_MAX);
+  std::string CompileIR(const std::string& n, const Expr& e) {
+    auto module_ctx = ExpressionCodeGen("jitmap_ir").Compile(n, e).Finish();
+    auto module = std::move(module_ctx.first);
+
+    std::string ir;
+    llvm::raw_string_ostream ss{ir};
+    module->print(ss, nullptr);
+
+    return ss.str();
   }
 
-  llvm::Value* operator()(const NotOpExpr* e) {
-    auto operand = e->operand()->Visit(*this);
-    return builder.CreateNot(operand);
+  DenseEvalFn LookupUserQuery(const std::string& query_name) {
+    auto symbol = ExpectOrRaise(jit_->lookup(user_queries_, query_name));
+    return llvm::jitTargetAddressToPointer<DenseEvalFn>(symbol.getAddress());
   }
 
-  llvm::Value* operator()(const AndOpExpr* e) {
-    auto [lhs, rhs] = VisitBinary(e);
-    return builder.CreateAnd(lhs, rhs);
-  }
+  // Introspection
+  std::string GetTargetCPU() const { return host_->getTargetCPU(); }
+  std::string GetTargetTriple() const { return host_->getTargetTriple().normalize(); }
+  llvm::DataLayout layout() const { return host_->createDataLayout(); }
 
-  llvm::Value* operator()(const OrOpExpr* e) {
-    auto [lhs, rhs] = VisitBinary(e);
-    return builder.CreateOr(lhs, rhs);
-  }
+ private:
+  orc::ThreadSafeModule Optimize(orc::ThreadSafeModule thread_safe_module) {
+    auto module = thread_safe_module.getModule();
+    auto pass_manager = std::make_unique<llvm::legacy::FunctionPassManager>(module);
+    auto target_analysis = host_->getTargetIRAnalysis();
+    pass_manager->add(llvm::createTargetTransformInfoWrapperPass(target_analysis));
+    pass_manager->add(llvm::createInstructionCombiningPass());
+    pass_manager->add(llvm::createPromoteMemoryToRegisterPass());
+    pass_manager->add(llvm::createGVNPass());
+    pass_manager->add(llvm::createNewGVNPass());
+    pass_manager->add(llvm::createCFGSimplificationPass());
+    pass_manager->add(llvm::createLoopSimplifyPass());
+    pass_manager->add(llvm::createLoopVectorizePass());
+    pass_manager->add(llvm::createLoopUnrollPass());
+    pass_manager->doInitialization();
 
-  llvm::Value* operator()(const XorOpExpr* e) {
-    auto [lhs, rhs] = VisitBinary(e);
-    return builder.CreateXor(lhs, rhs);
+    for (auto& function : *module) {
+      pass_manager->run(function);
+    }
+
+    return thread_safe_module;
   }
 
  private:
-  llvm::Value* FindBitmapByName(const std::string& name) {
-    auto result = bitmaps.find(name);
-    if (result == bitmaps.end())
-      throw CompilerException("Referenced bitmap '", name, "' not found.");
-    return result->second;
-  }
-
-  std::pair<llvm::Value*, llvm::Value*> VisitBinary(const BinaryOpExpr* e) {
-    return {e->left_operand()->Visit(*this), e->right_operand()->Visit(*this)};
-  }
+  std::unique_ptr<llvm::TargetMachine> host_;
+  std::unique_ptr<orc::LLJIT> jit_;
+  orc::JITDylib& user_queries_;
 };
 
-class QueryIRCodeGen::Impl {
- public:
-  Impl(const std::string& module_name)
-      : ctx_(std::make_unique<llvm::LLVMContext>()),
-        module_(std::make_unique<llvm::Module>(module_name, *ctx_)),
-        builder_(*ctx_) {}
+JitEngine::JitEngine(CompilerOptions opts)
+    : Pimpl(std::make_unique<JitEngineImpl>(InitHostTargetMachineBuilder(opts), opts)) {}
 
-  void Compile(const Query& query) { FunctionDeclForQuery(query); }
+std::shared_ptr<JitEngine> JitEngine::Make(CompilerOptions opts) {
+  return std::shared_ptr<JitEngine>{new JitEngine(opts)};
+}
 
-  ModuleAndContext Finish() { return {std::move(module_), std::move(ctx_)}; }
+std::string JitEngine::GetTargetCPU() const { return impl().GetTargetCPU(); }
+std::string JitEngine::GetTargetTriple() const { return impl().GetTargetTriple(); }
+void JitEngine::Compile(const std::string& name, const Expr& expression) {
+  impl().Compile(name, expression);
+}
 
- private:
-  void FunctionCodeGen(const Query& query, llvm::Function* fn) {
-    auto entry_block = llvm::BasicBlock::Create(*ctx_, "entry", fn);
-    builder_.SetInsertPoint(entry_block);
+std::string JitEngine::CompileIR(const std::string& name, const Expr& expression) {
+  return impl().CompileIR(name, expression);
+}
 
-    // Load bitmaps addresses
-    auto [inputs, output] = UnrollInputsOutput(query.variables().size(), fn);
-
-    // Constants
-    auto induction_type = llvm::Type::getInt64Ty(*ctx_);
-    auto zero = llvm::ConstantInt::get(induction_type, 0);
-    auto step = llvm::ConstantInt::get(induction_type, 1);
-    auto n_words = llvm::ConstantInt::get(induction_type, word_size());
-
-    auto loop_block = llvm::BasicBlock::Create(*ctx_, "loop", fn);
-    auto after_block = llvm::BasicBlock::Create(*ctx_, "after_loop", fn);
-
-    builder_.CreateBr(loop_block);
-    builder_.SetInsertPoint(loop_block);
-
-    // The following block is equivalent to
-    // for (int i = 0; i < n_words ; i += step) {
-    //   LoopBodyCodeGen(fn, i)
-    // }
-    {
-      // Define the `i` induction variable and initialize it to zero.
-      auto i = builder_.CreatePHI(induction_type, 2, "i");
-      i->addIncoming(zero, entry_block);
-
-      LoopBodyCodeGen(query, inputs, output, i);
-
-      // i += step
-      auto next_i = builder_.CreateAdd(i, step, "next_i");
-      // if (`i` == n_words) break;
-      auto exit_cond = builder_.CreateICmpEQ(next_i, n_words, "exit_cond");
-      builder_.CreateCondBr(exit_cond, after_block, loop_block);
-      i->addIncoming(next_i, loop_block);
-    }
-
-    builder_.SetInsertPoint(after_block);
-    builder_.CreateRetVoid();
-  }
-
-  std::pair<std::vector<llvm::Value*>, llvm::Value*> UnrollInputsOutput(
-      size_t n_bitmaps, llvm::Function* fn) {
-    auto args_it = fn->args().begin();
-    auto inputs_ptr = args_it++;
-    auto output_ptr = args_it++;
-
-    // Load scalar at index for given bitmap
-    auto load_bitmap = [&](size_t i) {
-      auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
-      auto bitmap_i = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx_), i);
-      auto gep = builder_.CreateInBoundsGEP(inputs_ptr, bitmap_i, namify("bitmap_gep"));
-      return builder_.CreateLoad(gep, namify("bitmap"));
-    };
-
-    std::vector<llvm::Value*> inputs;
-    for (size_t i = 0; i < n_bitmaps; i++) {
-      inputs.push_back(load_bitmap(i));
-    }
-
-    return {inputs, output_ptr};
-  }
-
-  void LoopBodyCodeGen(const Query& query, std::vector<llvm::Value*> inputs,
-                       llvm::Value* output, llvm::Value* loop_idx) {
-    // Load scalar at index for given bitmap
-    auto load_vector_inst = [&](auto bitmap_addr, size_t i) {
-      auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
-      // Compute the address to load
-      auto gep = builder_.CreateInBoundsGEP(bitmap_addr, {loop_idx}, namify("gep"));
-      // Load in a register
-      return builder_.CreateLoad(gep, namify("load"));
-    };
-
-    // Bind the variable bitmaps by name to inputs of the function
-    const auto& parameters = query.variables();
-    std::unordered_map<std::string, llvm::Value*> keyed_bitmaps;
-    for (size_t i = 0; i < inputs.size(); i++) {
-      keyed_bitmaps.emplace(parameters[i], load_vector_inst(inputs[i], i));
-    }
-
-    // Execute the expression tree on the input
-    ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, ElementType()};
-    auto result = query.expr().Visit(visitor);
-
-    // Store the result in the output bitmap.
-    auto gep = builder_.CreateInBoundsGEP(output, {loop_idx}, "gep_output");
-    auto bitcast = builder_.CreateBitCast(gep, ElementPtrType(), "bitcast_output");
-    builder_.CreateStore(result, bitcast);
-  }
-
-  llvm::FunctionType* FunctionTypeForArguments() {
-    // void
-    auto return_type = llvm::Type::getVoidTy(*ctx_);
-    // dense_fn(
-    // const int32_t** inputs,
-    auto inputs_type = ElementPtrType()->getPointerTo();
-    // int32_t* output,
-    auto output_type = ElementPtrType();
-    // )
-
-    constexpr bool is_var_args = false;
-    return llvm::FunctionType::get(return_type, {inputs_type, output_type}, is_var_args);
-  }
-
-  llvm::Function* FunctionDeclForQuery(const Query& query) {
-    auto fn_type = FunctionTypeForArguments();
-    // The generated function will be exposed as an external symbol, i.e the
-    // symbol will be globally visible. This would be equivalent to defining a
-    // symbol with the `extern` storage classifier.
-    auto linkage = llvm::Function::ExternalLinkage;
-    auto fn = llvm::Function::Create(fn_type, linkage, query.name(), *module_);
-
-    // The generated objects are accessed by taking the symbol address and
-    // casting to a function type. Thus, we must use the C calling convention.
-    fn->setCallingConv(llvm::CallingConv::C);
-    // The function will only access memory pointed by the parameter pointers.
-    fn->addFnAttr(llvm::Attribute::ArgMemOnly);
-
-    auto args_it = fn->args().begin();
-    auto inputs_ptr = args_it++;
-    auto output = args_it++;
-
-    inputs_ptr->setName("inputs");
-    // The NoCapture attribute indicates that the bitmap pointer
-    // will not be captured (leak outside the function).
-    inputs_ptr->addAttr(llvm::Attribute::NoCapture);
-    inputs_ptr->addAttr(llvm::Attribute::ReadOnly);
-
-    output->setName("output");
-    output->addAttr(llvm::Attribute::NoCapture);
-
-    FunctionCodeGen(query, fn);
-
-    return fn;
-  }
-
-  llvm::Type* ElementType() { return llvm::Type::getIntNTy(*ctx_, scalar_width()); }
-  llvm::Type* ElementPtrType() { return ElementType()->getPointerTo(); }
-
-  uint8_t scalar_width() const { return kBitsPerBitsetWord; }
-  uint32_t word_size() const { return kBitsPerContainer / scalar_width(); }
-
-  std::unique_ptr<llvm::LLVMContext> ctx_;
-  std::unique_ptr<llvm::Module> module_;
-  llvm::IRBuilder<> builder_;
-};
-
-QueryIRCodeGen::QueryIRCodeGen(const std::string& module_name)
-    : impl_(std::make_unique<QueryIRCodeGen::Impl>(module_name)) {}
-QueryIRCodeGen::QueryIRCodeGen(QueryIRCodeGen&& other) { std::swap(impl_, other.impl_); }
-QueryIRCodeGen::~QueryIRCodeGen() {}
-
-void QueryIRCodeGen::Compile(const Query& query) { impl_->Compile(query); }
-
-QueryIRCodeGen::ModuleAndContext QueryIRCodeGen::Finish() && { return impl_->Finish(); }
+DenseEvalFn JitEngine::LookupUserQuery(const std::string& query_name) {
+  return impl().LookupUserQuery(query_name);
+}
 
 }  // namespace query
 }  // namespace jitmap

@@ -18,22 +18,28 @@
 #include <string>
 #include <vector>
 
-#include <jitmap/query/type_fwd.h>
+#include <jitmap/util/pimpl.h>
 
 namespace jitmap {
 namespace query {
 
-class Query : public std::enable_shared_from_this<Query> {
+class Expr;
+class ExecutionContext;
+
+class QueryImpl;
+class Query : util::Pimpl<QueryImpl> {
  public:
   // Create a new query object based on an expression.
   //
   // \param[in] name, the name of the query
   // \param[in] expr, the expression of the query
+  // \param[in] context, the context where queries are compiled
   //
   // \return a new query object
   //
   // \throws ParserException with a reason why the parsing failed.
-  static std::shared_ptr<Query> Make(std::string name, std::string query);
+  static std::shared_ptr<Query> Make(const std::string& name, const std::string& query,
+                                     ExecutionContext* context);
 
   // Return the name of the query.
   const std::string& name() const;
@@ -44,14 +50,18 @@ class Query : public std::enable_shared_from_this<Query> {
   // Return the names of the referenced bitmap (variables) in the expression.
   const std::vector<std::string>& variables() const;
 
-  ~Query();
+ private:
+  Query(std::string name, std::string query, ExecutionContext* context);
+};
+
+class JitEngine;
+
+class ExecutionContext {
+ public:
+  JitEngine* jit() { return jit_.get(); }
 
  private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
-
-  Query(const Query&) = delete;
-  Query(std::string name, std::string query);
+  std::unique_ptr<JitEngine> jit_;
 };
 
 }  // namespace query

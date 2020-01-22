@@ -23,13 +23,12 @@
 namespace jitmap {
 namespace query {
 
-// An expression matcher
+// The Matcher interface is used to recognize patterns in expressions.
 class Matcher {
  public:
   virtual bool Match(const Expr& expr) const = 0;
   bool Match(Expr* expr) const {
-    if (!expr) return false;
-    return Match(*expr);
+    return (expr != nullptr) && Match(*expr);
   }
 
   bool operator()(const Expr& expr) const { return Match(expr); }
@@ -44,9 +43,9 @@ class TypeMatcher final : public Matcher {
   using Type = Expr::Type;
 
   // Construct a TypeMatcher matching a single type.
-  TypeMatcher(Type type);
+  explicit TypeMatcher(Type type);
   // Construct a TypeMatcher matching a set of types.
-  TypeMatcher(const std::vector<Expr::Type>& types);
+  explicit TypeMatcher(const std::vector<Expr::Type>& types);
   TypeMatcher(const std::initializer_list<Expr::Type>& types);
 
   bool Match(const Expr& expr) const override;
@@ -68,7 +67,7 @@ class OperandMatcher final : public Matcher {
     ALL,
   };
 
-  OperandMatcher(Matcher* operand_matcher, Mode mode = ANY);
+  explicit OperandMatcher(Matcher* operand_matcher, Mode mode = ANY);
 
   bool Match(const Expr& expr) const override;
 
@@ -89,7 +88,7 @@ class ChainMatcher final : public Matcher {
     ALL,
   };
 
-  ChainMatcher(const std::vector<Matcher*>& matchers, Mode mode = ALL);
+  explicit ChainMatcher(const std::vector<Matcher*>& matchers, Mode mode = ALL);
   ChainMatcher(const std::initializer_list<Matcher*>& matchers, Mode mode = ALL);
 
   bool Match(const Expr& expr) const override;
