@@ -47,9 +47,6 @@ class Query : util::Pimpl<QueryImpl> {
   // Return the expression of the query.
   const Expr& expr() const;
 
-  // Return the names of the referenced bitmap (variables) in the expression.
-  const std::vector<std::string>& variables() const;
-
  private:
   Query(std::string name, std::string query, ExecutionContext* context);
 };

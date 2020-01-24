@@ -32,7 +32,6 @@ class QueryImpl {
         query_(std::move(query)),
         expr_(Parse(query_, &builder_)),
         optimized_expr_(Optimizer(&builder_).Optimize(*expr_)),
-        variables_(expr_->Variables()),
         context_(context) {}
 
   // Accessors
@@ -40,7 +39,6 @@ class QueryImpl {
   const std::string& query() const { return query_; }
   const Expr& expr() const { return *expr_; }
   const Expr& optimized_expr() const { return *optimized_expr_; }
-  const std::vector<std::string>& variables() const { return variables_; }
   DenseEvalFn impl() const { return context_->jit()->LookupUserQuery(name()); }
 
  private:
@@ -49,7 +47,6 @@ class QueryImpl {
   ExprBuilder builder_;
   Expr* expr_;
   Expr* optimized_expr_;
-  std::vector<std::string> variables_;
   ExecutionContext* context_;
 };
 
@@ -68,7 +65,6 @@ std::shared_ptr<Query> Query::Make(const std::string& name, const std::string& e
 
 const std::string& Query::name() const { return impl().name(); }
 const Expr& Query::expr() const { return impl().expr(); }
-const std::vector<std::string>& Query::variables() const { return impl().variables(); }
 
 }  // namespace query
 }  // namespace jitmap
