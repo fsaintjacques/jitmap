@@ -19,6 +19,7 @@
 
 #include "jitmap/query/matcher.h"
 #include "jitmap/query/type_traits.h"
+#include "jitmap/util/compiler.h"
 
 namespace jitmap {
 namespace query {
@@ -72,6 +73,10 @@ bool Expr::operator==(const Expr& rhs) const {
     using E = std::decay_t<std::remove_pointer_t<decltype(left)>>;
     const E* right = static_cast<const E*>(&rhs);
 
+    // GCC warns about unused `right`. This is due to the conditional constexpr
+    // in the literal case.
+    JITMAP_UNUSED(right);
+
     if constexpr (is_literal<E>::value) return true;
     if constexpr (is_variable<E>::value) return left->value() == right->value();
     if constexpr (is_unary_op<E>::value) return *left->operand() == *right->operand();
@@ -102,6 +107,8 @@ static const char* OpToChar(Expr::Type op) {
     case Expr::XOR_OPERATOR:
       return "^";
   }
+
+  throw Exception("Unkonwn operator type: ", op);
 }
 
 std::string Expr::ToString() const {

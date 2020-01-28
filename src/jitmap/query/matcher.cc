@@ -76,6 +76,8 @@ bool ChainMatcher::Match(const Expr& expr) const {
     case ANY:
       return std::any_of(matchers_.cbegin(), matchers_.cend(), match);
   }
+
+  throw Exception("Unknown match type: ", mode_);
 }
 
 }  // namespace query

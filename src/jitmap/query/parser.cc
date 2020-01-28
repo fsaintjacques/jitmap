@@ -46,6 +46,8 @@ const char* TokenTypeToString(Token::Type type) {
     case Token::Type::END_OF_STREAM:
       return "EOS";
   }
+
+  throw ParserException("Unkonwn token type: ", type);
 }
 
 std::ostream& operator<<(std::ostream& os, Token::Type type) {

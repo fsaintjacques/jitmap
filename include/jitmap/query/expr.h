@@ -19,6 +19,8 @@
 #include <utility>
 #include <vector>
 
+#include <jitmap/util/exception.h>
+
 namespace jitmap {
 namespace query {
 
@@ -205,6 +207,8 @@ auto Expr::Visit(Visitor&& v) const {
     case XOR_OPERATOR:
       return v(dynamic_cast<const XorOpExpr*>(this));
   }
+
+  throw Exception("Unknown type: ", type());
 }
 
 template <typename Visitor>
@@ -225,6 +229,8 @@ auto Expr::Visit(Visitor&& v) {
     case XOR_OPERATOR:
       return v(dynamic_cast<XorOpExpr*>(this));
   }
+
+  throw Exception("Unknown type: ", type());
 }
 
 std::ostream& operator<<(std::ostream& os, const Expr& e);
