@@ -160,6 +160,11 @@ class JitEngineImpl {
     auto module_ctx = ExpressionCodeGen("jitmap_ir").Compile(n, e).Finish();
     auto module = std::move(module_ctx.first);
 
+    // By default, the TargetTriple is not part of the module. This ensure that
+    // callers of `jitmap-ir` don't need to explicit the tripple in the command
+    // line chain, e.g. via `opt` or `llc` utility.
+    module->setTargetTriple(GetTargetTriple());
+
     std::string ir;
     llvm::raw_string_ostream ss{ir};
     module->print(ss, nullptr);
