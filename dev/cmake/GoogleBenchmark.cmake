@@ -16,9 +16,9 @@
 configure_file(tests/BenchmarkCMakeLists.txt.in googlebenchmark-download/CMakeLists.txt)
 
 set(BENCHMARK_ENABLE_TESTING OFF)
-set(BENCHMARK_ENABLE_GTEST_TESTS OFF)
+set(EXTRA_ARGS "-DBENCHMARK_ENABLE_TESTING=${BENCHMARK_ENABLE_TESTING}")
 
-execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
+execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" ${EXTRA_ARGS} .
   RESULT_VARIABLE result
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/googlebenchmark-download )
 if(result)
