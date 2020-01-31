@@ -116,7 +116,7 @@ class ExpressionCodeGen {
     auto induction_type = llvm::Type::getInt64Ty(*ctx_);
     auto zero = llvm::ConstantInt::get(induction_type, 0);
     auto step = llvm::ConstantInt::get(induction_type, 1);
-    auto n_words = llvm::ConstantInt::get(induction_type, word_size());
+    auto n_words = llvm::ConstantInt::get(induction_type, words());
 
     auto loop_block = llvm::BasicBlock::Create(*ctx_, "loop", fn);
     auto after_block = llvm::BasicBlock::Create(*ctx_, "after_loop", fn);
@@ -247,8 +247,8 @@ class ExpressionCodeGen {
   llvm::Type* ElementType() { return llvm::Type::getIntNTy(*ctx_, scalar_width()); }
   llvm::Type* ElementPtrType() { return ElementType()->getPointerTo(); }
 
-  uint8_t scalar_width() const { return kBitsPerBitsetWord; }
-  uint32_t word_size() const { return kBitsPerContainer / scalar_width(); }
+  uint8_t scalar_width() const { return sizeof(char) * CHAR_BIT; }
+  uint32_t words() const { return kBitsPerContainer / scalar_width(); }
 
   std::unique_ptr<llvm::LLVMContext> ctx_;
   std::unique_ptr<llvm::Module> module_;

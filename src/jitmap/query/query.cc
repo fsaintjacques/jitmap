@@ -97,7 +97,7 @@ const std::string& Query::name() const { return impl().name(); }
 const Expr& Query::expr() const { return impl().expr(); }
 const std::vector<std::string>& Query::variables() const { return impl().variables(); }
 
-void Query::Eval(const BitsetWordType** inputs, BitsetWordType* output) {
+void Query::Eval(const char** inputs, char* output) {
   JITMAP_PRE_NE(inputs, nullptr);
   JITMAP_PRE_NE(output, nullptr);
 

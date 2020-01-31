@@ -70,7 +70,6 @@ TEST(BitsetTest, StackUInt64) {
   auto empty = make_bitset<64>(&no_bits);
   EXPECT_EQ(empty, empty);
   EXPECT_EQ(empty.size(), kBitsetSize);
-  EXPECT_EQ(empty.size_words(), sizeof(no_bits) / kBytesPerBitsetWord);
   EXPECT_EQ(empty.count(), 0);
   EXPECT_FALSE(empty.all());
   EXPECT_FALSE(empty.any());
@@ -80,7 +79,6 @@ TEST(BitsetTest, StackUInt64) {
   auto full = make_bitset<64>(&all_bits);
   EXPECT_EQ(full, full);
   EXPECT_EQ(full.size(), kBitsetSize);
-  EXPECT_EQ(full.size_words(), sizeof(all_bits) / kBytesPerBitsetWord);
   EXPECT_EQ(full.count(), kBitsetSize);
   EXPECT_TRUE(full.all());
   EXPECT_TRUE(full.any());
@@ -90,7 +88,6 @@ TEST(BitsetTest, StackUInt64) {
   auto some = make_bitset<64>(&some_bits);
   EXPECT_EQ(some, some);
   EXPECT_EQ(some.size(), kBitsetSize);
-  EXPECT_EQ(some.size_words(), sizeof(some_bits) / kBytesPerBitsetWord);
   EXPECT_EQ(some.count(), 32);
   EXPECT_FALSE(some.all());
   EXPECT_TRUE(some.any());
@@ -100,7 +97,6 @@ TEST(BitsetTest, StackUInt64) {
   auto other = make_bitset<64>(&other_bits);
   EXPECT_EQ(other, other);
   EXPECT_EQ(other.size(), kBitsetSize);
-  EXPECT_EQ(other.size_words(), sizeof(other_bits) / kBytesPerBitsetWord);
   EXPECT_EQ(other.count(), 32);
   EXPECT_FALSE(other.all());
   EXPECT_TRUE(other.any());
@@ -151,7 +147,7 @@ TEST(BitsetTest, ErrorOnNullPtrConstructor) {
 
 template <size_t N = kBitsPerContainer>
 class alignas(kCacheLineSize) BitsetStorage
-    : public std::array<BitsetWordType, N / kBitsPerBitsetWord> {
+    : public std::array<BitsetWordType, N / (sizeof(BitsetWordType) * CHAR_BIT)> {
  public:
   BitsetStorage(bool value = false) {
     memset(this->data(), value ? 0xFF : 0x00, N / CHAR_BIT);

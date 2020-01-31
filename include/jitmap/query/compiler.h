@@ -36,7 +36,7 @@ class CompilerException : public Exception {
 };
 
 // Signature of generated functions
-typedef void (*DenseEvalFn)(const BitsetWordType**, BitsetWordType*);
+typedef void (*DenseEvalFn)(const char**, char*);
 
 struct CompilerOptions {
   // Controls LLVM optimization level (-O0, -O1, -O2, -O3). Anything above 3

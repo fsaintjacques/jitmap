@@ -66,9 +66,9 @@ TEST_F(QueryExecTest, variables) {
 }
 
 TEST_F(QueryExecTest, EvalInvalidParameters) {
-  std::vector<BitsetWordType> a(kWordsPerContainers, 0U);
-  std::vector<BitsetWordType> result(kWordsPerContainers, 0U);
-  std::vector<const BitsetWordType*> inputs{};
+  std::vector<char> a(kBytesPerContainer, 0x00);
+  std::vector<char> result(kBytesPerContainer, 0x00);
+  std::vector<const char*> inputs{};
 
   auto not_a = Query::Make("not_a", "!a", &ctx);
   EXPECT_THROW(not_a->Eval(nullptr, nullptr), Exception);
@@ -78,27 +78,27 @@ TEST_F(QueryExecTest, EvalInvalidParameters) {
 }
 
 TEST_F(QueryExecTest, Eval) {
-  std::vector<BitsetWordType> a(kWordsPerContainers, 0U);
-  std::vector<BitsetWordType> b(kWordsPerContainers, ~(0U));
-  std::vector<BitsetWordType> result(kWordsPerContainers, 0U);
-  std::vector<const BitsetWordType*> inputs{};
+  std::vector<char> a(kBytesPerContainer, 0x00);
+  std::vector<char> b(kBytesPerContainer, 0xFF);
+  std::vector<char> result(kBytesPerContainer, 0x00);
+  std::vector<const char*> inputs{};
 
   auto not_a = Query::Make("not_a", "!a", &ctx);
 
   inputs = {a.data()};
   not_a->Eval(inputs.data(), result.data());
-  EXPECT_THAT(result, testing::Each(~0U));
+  EXPECT_THAT(result, testing::Each(0xFF));
 
   auto a_and_b = Query::Make("a_and_b", "a & b", &ctx);
 
   inputs = {a.data(), b.data()};
   a_and_b->Eval(inputs.data(), result.data());
-  EXPECT_THAT(result, testing::Each(0U));
+  EXPECT_THAT(result, testing::Each(0x00));
 
   // It can runs with the same input twice.
   inputs = {b.data(), b.data()};
   a_and_b->Eval(inputs.data(), result.data());
-  EXPECT_THAT(result, testing::Each(~0U));
+  EXPECT_THAT(result, testing::Each(0xFF));
 }
 
 }  // namespace query

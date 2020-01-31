@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 namespace jitmap {
 
 #ifndef CACHELINE

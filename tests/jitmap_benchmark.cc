@@ -37,8 +37,8 @@ static void StaticIntersection2(benchmark::State& state) {
 }
 
 static void JitIntersection2(benchmark::State& state) {
-  std::array<BitsetWordType, kWordsPerContainers> a, b, output;
-  std::vector<const BitsetWordType*> inputs{a.data(), b.data()};
+  std::array<char, kBytesPerContainer> a, b, output;
+  std::vector<const char*> inputs{a.data(), b.data()};
 
   query::ExecutionContext engine{query::JitEngine::Make()};
   auto query = query::Query::Make("benchmark_query_2", "a & b", &engine);
@@ -61,8 +61,8 @@ static void StaticIntersection3(benchmark::State& state) {
 }
 
 static void JitIntersection3(benchmark::State& state) {
-  std::array<BitsetWordType, kWordsPerContainers> a, b, c, output;
-  std::vector<const BitsetWordType*> inputs{a.data(), b.data(), c.data()};
+  std::array<char, kBytesPerContainer> a, b, c, output;
+  std::vector<const char*> inputs{a.data(), b.data(), c.data()};
 
   query::ExecutionContext engine{query::JitEngine::Make()};
   auto query = query::Query::Make("benchmark_query_3", "a & b & c", &engine);

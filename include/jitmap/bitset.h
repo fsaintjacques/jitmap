@@ -25,6 +25,8 @@
 
 namespace jitmap {
 
+using BitsetWordType = uint64_t;
+
 // Bitset is a container similar to `std::bitset<N>` but wrapping a data pointer.
 // The ownership/lifetime of the data pointer is defined by `Ptr` type.
 template <size_t N = kBitsPerContainer, typename Ptr = const BitsetWordType*>
@@ -38,24 +40,23 @@ class Bitset {
 
   // Indicate if the pointer is read-only.
   static constexpr bool storage_is_const = std::is_const<storage_type>::value;
+  static constexpr size_t kBitsPerWord = sizeof(word_type) * CHAR_BIT;
 
   // Construct a bitset from a pointer.
   Bitset(Ptr data) : data_(std::move(data)) { JITMAP_PRE_NE(data_, nullptr); }
 
   // Return the capacity (in bits) of the bitset.
   constexpr size_t size() const noexcept { return N; }
-  // Return the capacity (in words) of the bitset.
-  constexpr size_t size_words() const noexcept { return N / kBitsPerBitsetWord; }
 
   template <typename OtherPtr>
   bool operator==(const Bitset<N, OtherPtr>& rhs) const {
-    const auto& lhs_data = data();
-    const auto& rhs_data = rhs.data();
+    const auto& lhs_word = word();
+    const auto& rhs_word = rhs.word();
 
-    if (lhs_data == rhs_data) return true;
+    if (lhs_word == rhs_word) return true;
 
     for (size_t i = 0; i < size_words(); i++) {
-      if (lhs_data[i] != rhs_data[i]) return false;
+      if (lhs_word[i] != rhs_word[i]) return false;
     }
 
     return true;
@@ -73,13 +74,13 @@ class Bitset {
   }
 
   bool operator[](size_t i) const noexcept {
-    return data()[i / sizeof(word_type)] & (1U << (i % sizeof(word_type)));
+    return word()[i / sizeof(word_type)] & (1U << (i % sizeof(word_type)));
   }
 
   // Indicate if all bits are set.
   bool all() const noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      if (data()[i] != std::numeric_limits<word_type>::max()) return false;
+      if (word()[i] != std::numeric_limits<word_type>::max()) return false;
     }
 
     return true;
@@ -88,7 +89,7 @@ class Bitset {
   // Indicate if at least one bit is set.
   bool any() const noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      if (data()[i] != 0) return true;
+      if (word()[i] != 0) return true;
     }
 
     return false;
@@ -97,7 +98,7 @@ class Bitset {
   // Indicate if no bit is set.
   bool none() const noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      if (data()[i] != 0) return false;
+      if (word()[i] != 0) return false;
     }
 
     return true;
@@ -108,7 +109,7 @@ class Bitset {
     size_t sum = 0;
 
     for (size_t i = 0; i < size_words(); i++) {
-      sum += __builtin_popcountll(data()[i]);
+      sum += __builtin_popcountll(word()[i]);
     }
 
     return sum;
@@ -123,7 +124,7 @@ class Bitset {
   enable_if_writable<T1, Bitset<N, Ptr>&> operator&=(
       const Bitset<N, OtherPtr>& other) noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      data()[i] &= other.data()[i];
+      word()[i] &= other.word()[i];
     }
     return *this;
   }
@@ -133,7 +134,7 @@ class Bitset {
   enable_if_writable<T1, Bitset<N, Ptr>&> operator|=(
       const Bitset<N, OtherPtr>& other) noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      data()[i] |= other.data()[i];
+      word()[i] |= other.word()[i];
     }
     return *this;
   }
@@ -143,7 +144,7 @@ class Bitset {
   enable_if_writable<T1, Bitset<N, Ptr>&> operator^=(
       const Bitset<N, OtherPtr>& other) noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      data()[i] ^= other.data()[i];
+      word()[i] ^= other.word()[i];
     }
     return *this;
   }
@@ -152,7 +153,7 @@ class Bitset {
   template <typename T1 = storage_type>
   enable_if_writable<T1, Bitset<N, Ptr>&> operator~() noexcept {
     for (size_t i = 0; i < size_words(); i++) {
-      data()[i] = ~data()[i];
+      word()[i] = ~word()[i];
     }
     return *this;
   }
@@ -160,7 +161,7 @@ class Bitset {
   // Set all bits.
   template <typename T1 = storage_type>
   enable_if_writable<T1> set() noexcept {
-    memset(data(), 0xFF, size() / CHAR_BIT);
+    memset(word(), 0xFF, size() / CHAR_BIT);
   }
 
   /* TODO
@@ -172,7 +173,7 @@ class Bitset {
   // Clear all bits.
   template <typename T1 = storage_type>
   enable_if_writable<T1> reset() noexcept {
-    memset(data(), 0, size() / CHAR_BIT);
+    memset(word(), 0, size() / CHAR_BIT);
   }
 
   /* TODO
@@ -194,26 +195,34 @@ class Bitset {
   */
 
   // Data pointers
-
-  const BitsetWordType* data() const {
-    return reinterpret_cast<const BitsetWordType*>(&data_[0]);
-  }
+  const char* data() const { return reinterpret_cast<const char*>(&data_[0]); }
 
   template <typename T1 = storage_type>
-  enable_if_writable<T1, BitsetWordType*> data() {
-    return reinterpret_cast<BitsetWordType*>(&data_[0]);
+  enable_if_writable<T1, char*> data() {
+    return reinterpret_cast<char*>(&data_[0]);
   }
 
  private:
   Ptr data_;
 
-  static_assert(N % (kBitsPerBitsetWord) == 0,
-                "Bitset size must be a multiple of the BitsetWordType");
-  static_assert(N >= kBytesPerBitsetWord, "Bitset size must be greater than word_type");
+  static_assert(N % (kBitsPerWord) == 0, "Bitset size must be a multiple of word_type");
+  static_assert(N >= kBitsPerWord, "Bitset size must be greater than word_type");
 
   // Friend itself of other template parameters, used for accessing `data_`.
   template <size_t M, typename OtherPtr>
   friend class Bitset;
+
+  // Return the capacity (in words) of the bitset.
+  constexpr size_t size_words() const noexcept {
+    return N / (CHAR_BIT * sizeof(word_type));
+  }
+
+  const word_type* word() const { return reinterpret_cast<const word_type*>(&data_[0]); }
+
+  template <typename T1 = storage_type>
+  enable_if_writable<T1, word_type*> word() {
+    return reinterpret_cast<word_type*>(&data_[0]);
+  }
 };
 
 // Create a bitset from a memory address.
@@ -235,7 +244,7 @@ auto allocate_aligned(size_t alignment, size_t length) {
 
 template <size_t N>
 auto make_owned_bitset() {
-  constexpr size_t kNumberWords = N / kBitsPerBitsetWord;
+  constexpr size_t kNumberWords = N / (sizeof(BitsetWordType) * CHAR_BIT);
   return make_bitset<N>(allocate_aligned<BitsetWordType>(kCacheLineSize, kNumberWords));
 }
 
