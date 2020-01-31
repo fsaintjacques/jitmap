@@ -32,11 +32,11 @@ int main(int argc, char** argv) {
   auto query_str = argv[1];
 
   try {
-    auto engine = query::JitEngine::Make();
-    auto query = query::Query::Make("query", query_str, nullptr);
-    std::cout << engine->CompileIR(query->name(), query->expr()) << "\n";
-  } catch (jitmap::query::ParserException& e) {
-    std::cerr << "Problem parsing '" << query_str << "' :\n";
+    query::ExecutionContext context{query::JitEngine::Make()};
+    auto query = query::Query::Make("query", query_str, &context);
+    std::cout << context.jit()->CompileIR(query->name(), query->expr()) << "\n";
+  } catch (jitmap::Exception& e) {
+    std::cerr << "Problem '" << query_str << "' :\n";
     std::cerr << "\t" << e.message() << "\n";
     return 1;
   }

@@ -18,6 +18,7 @@
 
 #include <jitmap/query/compiler.h>
 #include <jitmap/query/parser.h>
+#include <jitmap/util/compiler.h>
 
 namespace jitmap {
 namespace query {
@@ -27,12 +28,25 @@ class JitTest : public QueryTest {
   void AssertQueryResult(const std::string& query_expr,
                          std::vector<BitsetWordType> input_words,
                          BitsetWordType output_word) {
-    auto query_name = "query_" + std::to_string(id++);
-    auto query_fn = CompileAndLookup(query_expr, query_name);
-    ASSERT_NE(query_fn, nullptr);
+    auto query = Query::Make(query_name(), query_expr, &ctx);
 
-    // Populate input bitmaps each with a repeated word.
+    auto [_, inputs] = InitInputs(input_words);
+    JITMAP_UNUSED(_);
+
+    std::vector<BitsetWordType> output(kWordsPerContainers, 0UL);
+    EXPECT_THAT(output, testing::Each(0UL));
+
+    query->Eval(inputs.data(), output.data());
+    EXPECT_THAT(output, testing::Each(output_word));
+  }
+
+ private:
+  std::string query_name() { return "query_" + std::to_string(id++); }
+
+  std::tuple<std::vector<std::vector<BitsetWordType>>, std::vector<const BitsetWordType*>>
+  InitInputs(std::vector<BitsetWordType> input_words) {
     size_t n_bitmaps = input_words.size();
+
     std::vector<std::vector<BitsetWordType>> bitmaps;
     std::vector<const BitsetWordType*> inputs;
     for (size_t i = 0; i < n_bitmaps; i++) {
@@ -42,29 +56,17 @@ class JitTest : public QueryTest {
       EXPECT_THAT(bitmaps[i], testing::Each(repeated_word));
     }
 
-    // Populate output bitmap
-    std::vector<BitsetWordType> output(kWordsPerContainers, 0UL);
-    EXPECT_THAT(output, testing::Each(0UL));
-
-    query_fn(inputs.data(), output.data());
-    EXPECT_THAT(output, testing::Each(output_word));
-  }
-
-  DenseEvalFn CompileAndLookup(const std::string& query_expr,
-                               const std::string& query_name) {
-    auto query = Query::Make(query_name, query_expr, nullptr);
-    engine_->Compile(query->name(), query->expr());
-    return engine_->LookupUserQuery(query_name);
+    return {std::move(bitmaps), std::move(inputs)};
   }
 
  protected:
   std::atomic<uint32_t> id = 0;
-  std::shared_ptr<JitEngine> engine_ = JitEngine::Make();
+  ExecutionContext ctx{JitEngine::Make()};
 };
 
 TEST_F(JitTest, CpuDetection) {
-  EXPECT_NE(engine_->GetTargetCPU(), "");
-  EXPECT_NE(engine_->GetTargetTriple(), "");
+  EXPECT_NE(ctx.jit()->GetTargetCPU(), "");
+  EXPECT_NE(ctx.jit()->GetTargetTriple(), "");
 }
 
 TEST_F(JitTest, CompileAndExecuteTest) {

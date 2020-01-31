@@ -14,6 +14,7 @@
 
 #include "jitmap/query/query.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,14 +33,17 @@ class QueryImpl {
         query_(std::move(query)),
         expr_(Parse(query_, &builder_)),
         optimized_expr_(Optimizer(&builder_).Optimize(*expr_)),
-        context_(context) {}
+        context_(context),
+        variables_(expr_->Variables()) {}
 
   // Accessors
   const std::string& name() const { return name_; }
   const std::string& query() const { return query_; }
   const Expr& expr() const { return *expr_; }
   const Expr& optimized_expr() const { return *optimized_expr_; }
-  DenseEvalFn impl() const { return context_->jit()->LookupUserQuery(name()); }
+  const std::vector<std::string>& variables() const { return variables_; }
+
+  DenseEvalFn dense_eval_fn() const { return context_->jit()->LookupUserQuery(name()); }
 
  private:
   std::string name_;
@@ -48,23 +52,63 @@ class QueryImpl {
   Expr* expr_;
   Expr* optimized_expr_;
   ExecutionContext* context_;
+
+  std::vector<std::string> variables_;
 };
+
+static inline void ValidateQueryName(const std::string& name) {
+  if (name.empty()) {
+    throw CompilerException("Query name must have at least one character");
+  }
+
+  auto first = name[0];
+  if (!std::isalnum(first)) {
+    throw CompilerException(
+        "The first character of the Query name must be an alpha numeric character but "
+        "got",
+        first);
+  }
+
+  auto is_valid_char = [](auto c) { return std::isalnum(c) || c == '_'; };
+  if (!std::all_of(name.cbegin(), name.cend(), is_valid_char)) {
+    throw CompilerException(
+        "The characters of a query name must either be an alpha numeric character or an "
+        "underscore.");
+  }
+}
 
 Query::Query(std::string name, std::string query, ExecutionContext* context)
     : Pimpl(std::make_unique<QueryImpl>(std::move(name), std::move(query), context)) {}
 
 std::shared_ptr<Query> Query::Make(const std::string& name, const std::string& expr,
                                    ExecutionContext* context) {
+  JITMAP_PRE_NE(context, nullptr);
+
+  // Ensure that the query names follows the restriction
+  ValidateQueryName(name);
+
   auto query = std::shared_ptr<Query>(new Query(name, expr, context));
-  if (context != nullptr) {
-    context->jit()->Compile(query->name(), query->expr());
-  }
+  context->jit()->Compile(query->name(), query->expr());
 
   return query;
 }
 
 const std::string& Query::name() const { return impl().name(); }
 const Expr& Query::expr() const { return impl().expr(); }
+const std::vector<std::string>& Query::variables() const { return impl().variables(); }
+
+void Query::Eval(const BitsetWordType** inputs, BitsetWordType* output) {
+  JITMAP_PRE_NE(inputs, nullptr);
+  JITMAP_PRE_NE(output, nullptr);
+
+  auto n_inputs = variables().size();
+  for (size_t i = 0; i < n_inputs; i++) {
+    JITMAP_PRE_NE(inputs[i], nullptr);
+  }
+
+  auto eval_fn = impl().dense_eval_fn();
+  eval_fn(inputs, output);
+}
 
 }  // namespace query
 }  // namespace jitmap

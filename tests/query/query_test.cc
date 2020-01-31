@@ -14,33 +14,91 @@
 
 #include "../query_test.h"
 
+#include <jitmap/query/compiler.h>
 #include <jitmap/query/query.h>
 
 namespace jitmap {
 namespace query {
 
-class ExprTest : public QueryTest {};
+class QueryExecTest : public QueryTest {
+ protected:
+  ExecutionContext ctx{JitEngine::Make()};
+};
 
-TEST_F(ExprTest, Equals) {
-  // Ensure pointer is different than the builder's ptr.
-  FullBitmapExpr f;
-  EmptyBitmapExpr e;
+using testing::ContainerEq;
+using testing::ElementsAre;
 
-  ExprEq(&f, &f);
-  ExprEq(Full(), &f);
-  ExprEq(&e, Empty());
-
-  ExprEq(Var("a"), Var("a"));
-  ExprNe(Var("b"), Var("c"));
-
-  ExprEq(Not(&f), Not(Full()));
-  ExprNe(Not(&e), Not(&f));
-
-  ExprEq(And(Var("b"), Or(Var("a"), &f)), And(Var("b"), Or(Var("a"), &f)));
+TEST_F(QueryExecTest, MakeInvalidNames) {
+  EXPECT_THROW(Query::Make("", "!a", &ctx), CompilerException);
+  EXPECT_THROW(Query::Make("_a", "!a", &ctx), CompilerException);
+  EXPECT_THROW(Query::Make("^-?", "!a", &ctx), CompilerException);
+  EXPECT_THROW(Query::Make("herpidy^", "!a", &ctx), CompilerException);
 }
 
-TEST_F(ExprTest, EqualsNotCommutative) {
-  ExprNe(And(Full(), Empty()), And(Empty(), Full()));
+TEST_F(QueryExecTest, MakeInvalidExpressions) {
+  EXPECT_THROW(Query::Make("valid", "", &ctx), ParserException);
+  EXPECT_THROW(Query::Make("valid", "a !^ b", &ctx), ParserException);
+  EXPECT_THROW(Query::Make("valid", "a b", &ctx), ParserException);
+}
+
+TEST_F(QueryExecTest, Make) {
+  auto q1 = Query::Make("q1", "a & b", &ctx);
+  EXPECT_EQ(q1->name(), "q1");
+  EXPECT_EQ(q1->expr(), And(Var("a"), Var("b")));
+
+  auto q2 = Query::Make("q2", "a ^ a", &ctx);
+  EXPECT_EQ(q2->name(), "q2");
+  EXPECT_EQ(q2->expr(), Xor(Var("a"), Var("a")));
+}
+
+TEST_F(QueryExecTest, variables) {
+  auto not_a = Query::Make("not_a", "!a", &ctx);
+  EXPECT_THAT(not_a->variables(), ElementsAre("a"));
+
+  auto a_and_b = Query::Make("a_and_b", "a & b", &ctx);
+  EXPECT_THAT(a_and_b->variables(), ElementsAre("a", "b"));
+
+  auto a_xor_a = Query::Make("a_xor_a", "a ^ a", &ctx);
+  EXPECT_THAT(a_xor_a->variables(), ElementsAre("a"));
+
+  auto nested = Query::Make("nested", "!a | ((a ^ b) & (c | d) ^ b)", &ctx);
+  EXPECT_THAT(nested->variables(), ElementsAre("a", "b", "c", "d"));
+}
+
+TEST_F(QueryExecTest, EvalInvalidParameters) {
+  std::vector<BitsetWordType> a(kWordsPerContainers, 0U);
+  std::vector<BitsetWordType> result(kWordsPerContainers, 0U);
+  std::vector<const BitsetWordType*> inputs{};
+
+  auto not_a = Query::Make("not_a", "!a", &ctx);
+  EXPECT_THROW(not_a->Eval(nullptr, nullptr), Exception);
+  EXPECT_THROW(not_a->Eval(nullptr, result.data()), Exception);
+  inputs = {nullptr};
+  EXPECT_THROW(not_a->Eval(inputs.data(), result.data()), Exception);
+}
+
+TEST_F(QueryExecTest, Eval) {
+  std::vector<BitsetWordType> a(kWordsPerContainers, 0U);
+  std::vector<BitsetWordType> b(kWordsPerContainers, ~(0U));
+  std::vector<BitsetWordType> result(kWordsPerContainers, 0U);
+  std::vector<const BitsetWordType*> inputs{};
+
+  auto not_a = Query::Make("not_a", "!a", &ctx);
+
+  inputs = {a.data()};
+  not_a->Eval(inputs.data(), result.data());
+  EXPECT_THAT(result, testing::Each(~0U));
+
+  auto a_and_b = Query::Make("a_and_b", "a & b", &ctx);
+
+  inputs = {a.data(), b.data()};
+  a_and_b->Eval(inputs.data(), result.data());
+  EXPECT_THAT(result, testing::Each(0U));
+
+  // It can runs with the same input twice.
+  inputs = {b.data(), b.data()};
+  a_and_b->Eval(inputs.data(), result.data());
+  EXPECT_THAT(result, testing::Each(~0U));
 }
 
 }  // namespace query

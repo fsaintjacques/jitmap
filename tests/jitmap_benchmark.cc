@@ -37,25 +37,19 @@ static void StaticIntersection2(benchmark::State& state) {
 }
 
 static void JitIntersection2(benchmark::State& state) {
-  std::vector<std::vector<BitsetWordType>> bitmaps;
-  std::vector<const BitsetWordType*> inputs;
-  for (size_t i = 0; i < 2; i++) {
-    bitmaps.emplace_back(kWordsPerContainers, 0UL);
-    inputs.emplace_back(bitmaps[i].data());
-  }
-  std::vector<BitsetWordType> output(kWordsPerContainers, 0UL);
+  std::array<BitsetWordType, kWordsPerContainers> a, b, output;
+  std::vector<const BitsetWordType*> inputs{a.data(), b.data()};
 
-  auto engine = query::JitEngine::Make();
-  auto query = query::Query::Make("benchmark_query2", "a & b", nullptr);
-  engine->Compile(query->name(), query->expr());
-  auto eval_fn = engine->LookupUserQuery("benchmark_query2");
+  query::ExecutionContext engine{query::JitEngine::Make()};
+  auto query = query::Query::Make("benchmark_query_2", "a & b", &engine);
 
   for (auto _ : state) {
-    eval_fn(inputs.data(), output.data());
+    query->Eval(inputs.data(), output.data());
   }
 
   state.SetBytesProcessed(kBytesPerContainer * 2 * state.iterations());
 }
+
 static void StaticIntersection3(benchmark::State& state) {
   DenseBitmap a, b, c;
 
@@ -67,46 +61,22 @@ static void StaticIntersection3(benchmark::State& state) {
 }
 
 static void JitIntersection3(benchmark::State& state) {
-  std::vector<std::vector<BitsetWordType>> bitmaps;
-  std::vector<const BitsetWordType*> inputs;
-  for (size_t i = 0; i < 3; i++) {
-    bitmaps.emplace_back(kWordsPerContainers, 0UL);
-    inputs.emplace_back(bitmaps[i].data());
-  }
-  std::vector<BitsetWordType> output(kWordsPerContainers, 0UL);
+  std::array<BitsetWordType, kWordsPerContainers> a, b, c, output;
+  std::vector<const BitsetWordType*> inputs{a.data(), b.data(), c.data()};
 
-  auto engine = query::JitEngine::Make();
-  auto query = query::Query::Make("benchmark_query3", "a & b & c", nullptr);
-  engine->Compile(query->name(), query->expr());
-  auto eval_fn = engine->LookupUserQuery("benchmark_query3");
+  query::ExecutionContext engine{query::JitEngine::Make()};
+  auto query = query::Query::Make("benchmark_query_3", "a & b & c", &engine);
 
   for (auto _ : state) {
-    eval_fn(inputs.data(), output.data());
+    query->Eval(inputs.data(), output.data());
   }
 
   state.SetBytesProcessed(kBytesPerContainer * 3 * state.iterations());
 }
-/*
-
-
-static void StaticIntersection4(benchmark::State& state) {
-  DenseBitmap a, b, c, d;
-
-  for (auto _ : state) {
-    benchmark::DoNotOptimize(a & b & c & d);
-  }
-
-  state.SetBytesProcessed(((kBitsPerContainer / 8) * 4) * state.iterations());
-}
-*/
 
 BENCHMARK(StaticIntersection2);
 BENCHMARK(JitIntersection2);
 BENCHMARK(StaticIntersection3);
 BENCHMARK(JitIntersection3);
 
-/*
-BENCHMARK(StaticIntersection3);
-BENCHMARK(StaticIntersection4);
-*/
 }  // namespace jitmap
