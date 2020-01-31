@@ -1,6 +1,42 @@
 # jitmap: Jitted bitmaps
 
-## Language
+jitmap is a small library providing an execution engine evaluating logical
+binary expressions on bitmaps. Some examples:
+
+* In search engines, posting lists are often represented by sequence of
+  integers, or bitmaps. Evaluating a search term (logical expression on
+  keywords) can be implemented by a logical expression on bitmaps.
+
+* In columnar databases, bitmaps are used to represent selection vectors,
+  themselves the intermediary representation of the results of predicate filter
+  on rows. The bitmaps are then combined in a final bitmap, the predicate
+  expression transformed in a logical expression on bitmaps.
+
+* In stream system with rule engines, e.g. adtech bid filtering on campaign
+  rules, bitmaps are used as a first-pass optimization to lower the number of
+  campaigns' rules to evaluate on each incoming event.
+
+jitmap compiles logical expresion into native functions that takes multiple
+inputs dense bitmaps pointers, e.g. `const char**`, and write the result in a
+destination pointer, e.g. `const char*`. The signature of such generated
+functions are `void fn(const char**, char*)`. The functions are then callable
+in the same address space.
+
+The following snippet shows an example of what jitmap achieves:
+
+```C
+typedef void (*dense_eval_fn)(const char**, char*);
+
+dense_eval_fn a_and_b = jitmap_compile("a_and_b", "a ^ b");
+const char** addrs[2] = {&a, &b};
+
+// `output` will now contains the result of `a & b` applied vertically likely
+// using // vectorized instruction available on the host running this code, as
+// opposed to where the code was compiled.
+a_and_b(addrs, &output);
+```
+
+## Logical expression language
 
 jitmap offers a small DSL language to evaluate bitwise operations on bitmaps.
 The language supports variables (named bitmap), empty/full literals, and basic
@@ -35,42 +71,53 @@ a & b
 
 ### *jitmap-ir* tool
 
-The *jitmap-ir* tool takes an expression as first input argument and dumps the
-generated LLVM ir to stdout. By default, this will not use vectorized instruction.
+The *jitmap-ir* binary takes an expression as first input argument and dumps the
+generated LLVM' IR to stdout. It is useful to debug and peek at the generated
+code. Using LLVM command line utilies, we can also look at the expected
+generated assembly for any platform.
 
 ```llvm
-# tools/jitmap-ir '(a & b & c & d | e ^ f)'
-; ModuleID = 'jitmap-ir-module'
-source_filename = "jitmap-ir-module"
+# tools/jitmap-ir "(a & b) | (c & c) | (c ^ d) | (c & b) | (d ^ a)"
+; ModuleID = 'jitmap_ir'
+source_filename = "jitmap_ir"
+target triple = "x86_64-pc-linux-gnu"
 
 ; Function Attrs: argmemonly
-define void @query(i64* nocapture readonly %in, i64* nocapture readonly %in1, i64* nocapture readonly %in2, i64* nocapture readonly %in3, i64* nocapture readonly %in4, i64* nocapture readonly %in5, i64* nocapture %out) #0 {
+define void @query(i32** nocapture readonly %inputs, i32* nocapture %output) #0 {
 entry:
+  %bitmap_gep_0 = getelementptr inbounds i32*, i32** %inputs, i64 0
+  %bitmap_0 = load i32*, i32** %bitmap_gep_0
+  %bitmap_gep_1 = getelementptr inbounds i32*, i32** %inputs, i64 1
+  %bitmap_1 = load i32*, i32** %bitmap_gep_1
+  %bitmap_gep_2 = getelementptr inbounds i32*, i32** %inputs, i64 2
+  %bitmap_2 = load i32*, i32** %bitmap_gep_2
+  %bitmap_gep_3 = getelementptr inbounds i32*, i32** %inputs, i64 3
+  %bitmap_3 = load i32*, i32** %bitmap_gep_3
   br label %loop
 
 loop:                                             ; preds = %loop, %entry
   %i = phi i64 [ 0, %entry ], [ %next_i, %loop ]
-  %gep_0 = getelementptr inbounds i64, i64* %in, i64 %i
-  %load_0 = load i64, i64* %gep_0
-  %gep_1 = getelementptr inbounds i64, i64* %in1, i64 %i
-  %load_1 = load i64, i64* %gep_1
-  %gep_2 = getelementptr inbounds i64, i64* %in2, i64 %i
-  %load_2 = load i64, i64* %gep_2
-  %gep_3 = getelementptr inbounds i64, i64* %in3, i64 %i
-  %load_3 = load i64, i64* %gep_3
-  %gep_4 = getelementptr inbounds i64, i64* %in4, i64 %i
-  %load_4 = load i64, i64* %gep_4
-  %gep_5 = getelementptr inbounds i64, i64* %in5, i64 %i
-  %load_5 = load i64, i64* %gep_5
-  %0 = and i64 %load_0, %load_1
-  %1 = and i64 %0, %load_2
-  %2 = and i64 %1, %load_3
-  %3 = xor i64 %load_4, %load_5
-  %4 = or i64 %2, %3
-  %gep_output = getelementptr inbounds i64, i64* %out, i64 %i
-  store i64 %4, i64* %gep_output
+  %gep_0 = getelementptr inbounds i32, i32* %bitmap_0, i64 %i
+  %load_0 = load i32, i32* %gep_0
+  %gep_1 = getelementptr inbounds i32, i32* %bitmap_1, i64 %i
+  %load_1 = load i32, i32* %gep_1
+  %gep_2 = getelementptr inbounds i32, i32* %bitmap_2, i64 %i
+  %load_2 = load i32, i32* %gep_2
+  %gep_3 = getelementptr inbounds i32, i32* %bitmap_3, i64 %i
+  %load_3 = load i32, i32* %gep_3
+  %0 = and i32 %load_0, %load_1
+  %1 = and i32 %load_2, %load_2
+  %2 = or i32 %0, %1
+  %3 = xor i32 %load_2, %load_3
+  %4 = or i32 %2, %3
+  %5 = and i32 %load_2, %load_1
+  %6 = or i32 %4, %5
+  %7 = xor i32 %load_3, %load_0
+  %8 = or i32 %6, %7
+  %gep_output = getelementptr inbounds i32, i32* %output, i64 %i
+  store i32 %8, i32* %gep_output
   %next_i = add i64 %i, 1
-  %exit_cond = icmp eq i64 %next_i, 1024
+  %exit_cond = icmp eq i64 %next_i, 2048
   br i1 %exit_cond, label %after_loop, label %loop
 
 after_loop:                                       ; preds = %loop
@@ -80,40 +127,52 @@ after_loop:                                       ; preds = %loop
 attributes #0 = { argmemonly }
 ```
 
-We can then use LLVM's `llc` to transform the IR into native assembly.
+We can then use LLVM's `opt` and `llc` to transform the IR into native assembly.
 
 ```objdump
-# tools/jitmap-ir '(a & b & c & d | e ^ f)' | llc-8 -O3 -mcpu=core-avx2
-ninja: no work to do.
+# tools/jitmap-ir "(a & b) | (c & c) | (c ^ d) | (c & b) | (d ^ a)" | llc -O3
         .text
-        .file   "jitmap-ir-module"
+        .file   "jitmap_ir"
         .globl  query                   # -- Begin function query
         .p2align        4, 0x90
         .type   query,@function
 query:                                  # @query
         .cfi_startproc
 # %bb.0:                                # %entry
-        pushq   %rbx
+        pushq   %rbp
         .cfi_def_cfa_offset 16
-        .cfi_offset %rbx, -16
-        movq    16(%rsp), %r10
-        xorl    %eax, %eax
+        pushq   %rbx
+        .cfi_def_cfa_offset 24
+        .cfi_offset %rbx, -24
+        .cfi_offset %rbp, -16
+        movq    (%rdi), %r8
+        movq    8(%rdi), %r9
+        movq    16(%rdi), %r10
+        movq    24(%rdi), %r11
+        movq    $-8192, %rax            # imm = 0xE000
         .p2align        4, 0x90
 .LBB0_1:                                # %loop
                                         # =>This Inner Loop Header: Depth=1
-        movq    (%rdi,%rax), %r11
-        movq    (%r8,%rax), %rbx
-        andq    (%rsi,%rax), %r11
-        andq    (%rdx,%rax), %r11
-        andq    (%rcx,%rax), %r11
-        xorq    (%r9,%rax), %rbx
-        orq     %r11, %rbx
-        movq    %rbx, (%r10,%rax)
-        addq    $8, %rax
-        cmpq    $8192, %rax             # imm = 0x2000
+        movl    8192(%r8,%rax), %ecx
+        movl    8192(%r9,%rax), %edx
+        movl    8192(%r10,%rax), %edi
+        movl    8192(%r11,%rax), %ebx
+        movl    %edi, %ebp
+        xorl    %ebx, %ebp
+        xorl    %ecx, %ebx
+        andl    %edx, %ecx
+        orl     %edi, %ebp
+        andl    %edx, %edi
+        orl     %ebp, %edi
+        orl     %edi, %ebx
+        orl     %ecx, %ebx
+        movl    %ebx, 8192(%rsi,%rax)
+        addq    $4, %rax
         jne     .LBB0_1
 # %bb.2:                                # %after_loop
         popq    %rbx
+        .cfi_def_cfa_offset 16
+        popq    %rbp
         .cfi_def_cfa_offset 8
         retq
 .Lfunc_end0:
@@ -127,10 +186,11 @@ query:                                  # @query
 
 This code is still not fully optimized, `opt` is used for this.
 
-```assembly
-# tools/jitmap-ir '(a & b & c & d | e ^ f)' | opt-8 -S -O3 -mcpu=core-avx2 -mtriple=x86_64-unknown-linux-gnu | llc-8 -O3 -mcpu=core-avx2
+```objdump
+# tools/jitmap-ir "(a & b) | (c & c) | (c ^ d) | (c & b) | (d ^ a)" | opt -O3 -S -mcpu=core-avx2| llc -O3
+ninja: no work to do.
         .text
-        .file   "jitmap-ir-module"
+        .file   "jitmap_ir"
         .section        .rodata.cst8,"aM",@progbits,8
         .p2align        3               # -- Begin function query
 .LCPI0_0:
@@ -144,115 +204,48 @@ This code is still not fully optimized, `opt` is used for this.
 query:                                  # @query
 # %bb.0:                                # %entry
         pushq   %rbp
+        pushq   %r15
         pushq   %r14
+        pushq   %r12
         pushq   %rbx
-        movq    32(%rsp), %r10
-        leaq    8192(%r10), %rbp
-        vmovq   %rcx, %xmm0
-        vmovq   %rdx, %xmm1
-        vpunpcklqdq     %xmm0, %xmm1, %xmm0 # xmm0 = xmm1[0],xmm0[0]
-        vmovq   %rsi, %xmm1
-        vmovq   %rdi, %xmm2
-        vpunpcklqdq     %xmm1, %xmm2, %xmm1 # xmm1 = xmm2[0],xmm1[0]
-        vinserti128     $1, %xmm0, %ymm1, %ymm0
-        vpbroadcastq    .LCPI0_0(%rip), %ymm1 # ymm1 = [8192,8192,8192,8192]
-        vpaddq  %ymm1, %ymm0, %ymm1
-        leaq    8192(%r8), %rax
-        leaq    8192(%r9), %r11
-        vmovq   %r10, %xmm2
-        vpbroadcastq    %xmm2, %ymm2
-        vpbroadcastq    .LCPI0_1(%rip), %ymm3 # ymm3 = [9223372036854775808,9223372036854775808,9223372036854775808,9223372036854775808]
-        vpxor   %ymm3, %ymm1, %ymm1
-        vpxor   %ymm3, %ymm2, %ymm2
-        cmpq    %r10, %rax
-        seta    %al
-        vpcmpgtq        %ymm2, %ymm1, %ymm1
-        cmpq    %r8, %rbp
-        seta    %bl
-        cmpq    %r10, %r11
-        seta    %r11b
-        cmpq    %r9, %rbp
-        vmovq   %rbp, %xmm2
-        vpbroadcastq    %xmm2, %ymm2
-        vpxor   %ymm3, %ymm0, %ymm0
-        vpxor   %ymm3, %ymm2, %ymm2
-        vpcmpgtq        %ymm0, %ymm2, %ymm0
-        vpand   %ymm0, %ymm1, %ymm0
-        vextracti128    $1, %ymm0, %xmm1
-        seta    %r14b
-        vpackssdw       %xmm1, %xmm0, %xmm2
-        vpackssdw       %xmm0, %xmm1, %xmm0
-        vpor    %xmm0, %xmm2, %xmm0
-        vpshufd $229, %xmm0, %xmm1      # xmm1 = xmm0[1,1,2,3]
-        vpor    %xmm1, %xmm0, %xmm0
-        vpextrb $0, %xmm0, %ebp
-        testb   $1, %bpl
-        jne     .LBB0_5
-# %bb.1:                                # %entry
-        andb    %bl, %al
-        jne     .LBB0_5
-# %bb.2:                                # %entry
-        andb    %r14b, %r11b
-        jne     .LBB0_5
-# %bb.3:                                # %vector.body.preheader
-        xorl    %eax, %eax
-        .p2align        4, 0x90
-.LBB0_4:                                # %vector.body
+#  ...
+# And the holy grail fully vectorized loop
+.LBB0_2:                                # %vector.body
                                         # =>This Inner Loop Header: Depth=1
-        vmovdqu (%rsi,%rax), %ymm0
-        vmovdqu 32(%rsi,%rax), %ymm1
-        vmovdqu (%r9,%rax), %ymm2
-        vmovdqu 32(%r9,%rax), %ymm3
-        vpand   (%rdi,%rax), %ymm0, %ymm0
-        vpand   32(%rdi,%rax), %ymm1, %ymm1
-        vpand   (%rdx,%rax), %ymm0, %ymm0
-        vpand   32(%rdx,%rax), %ymm1, %ymm1
-        vpand   (%rcx,%rax), %ymm0, %ymm0
-        vpand   32(%rcx,%rax), %ymm1, %ymm1
-        vpxor   (%r8,%rax), %ymm2, %ymm2
-        vpxor   32(%r8,%rax), %ymm3, %ymm3
+        vmovdqu (%r14,%rbx), %ymm0
+        vmovdqu 32(%r14,%rbx), %ymm1
+        vmovdqu (%r12,%rbx), %ymm2
+        vmovdqu 32(%r12,%rbx), %ymm3
+        vmovdqu (%rdi,%rbx), %ymm4
+        vmovdqu 32(%rdi,%rbx), %ymm5
+        vpand   (%r15,%rbx), %ymm0, %ymm6
+        vpand   32(%r15,%rbx), %ymm1, %ymm7
+        vpor    %ymm2, %ymm6, %ymm6
+        vpor    %ymm3, %ymm7, %ymm7
+        vpxor   %ymm2, %ymm4, %ymm2
+        vpxor   %ymm3, %ymm5, %ymm3
+        vpxor   %ymm0, %ymm4, %ymm0
         vpor    %ymm0, %ymm2, %ymm0
+        vpor    %ymm0, %ymm6, %ymm0
+        vpxor   %ymm1, %ymm5, %ymm1
         vpor    %ymm1, %ymm3, %ymm1
-        vmovdqu %ymm0, (%r10,%rax)
-        vmovdqu %ymm1, 32(%r10,%rax)
-        addq    $64, %rax
-        cmpq    $8192, %rax             # imm = 0x2000
-        jne     .LBB0_4
-        jmp     .LBB0_7
-.LBB0_5:                                # %loop.preheader
-        xorl    %eax, %eax
-        .p2align        4, 0x90
-.LBB0_6:                                # %loop
-                                        # =>This Inner Loop Header: Depth=1
-        movq    (%rsi,%rax), %rbp
-        movq    (%r9,%rax), %rbx
-        andq    (%rdi,%rax), %rbp
-        andq    (%rdx,%rax), %rbp
-        andq    (%rcx,%rax), %rbp
-        xorq    (%r8,%rax), %rbx
-        orq     %rbp, %rbx
-        movq    %rbx, (%r10,%rax)
-        movq    8(%rsi,%rax), %rbp
-        movq    8(%r9,%rax), %rbx
-        andq    8(%rdi,%rax), %rbp
-        andq    8(%rdx,%rax), %rbp
-        andq    8(%rcx,%rax), %rbp
-        xorq    8(%r8,%rax), %rbx
-        orq     %rbp, %rbx
-        movq    %rbx, 8(%r10,%rax)
-        addq    $16, %rax
-        cmpq    $8192, %rax             # imm = 0x2000
-        jne     .LBB0_6
-.LBB0_7:                                # %after_loop
+        vpor    %ymm1, %ymm7, %ymm1
+        vmovdqu %ymm0, (%rsi,%rbx)
+        vmovdqu %ymm1, 32(%rsi,%rbx)
+        addq    $64, %rbx
+        cmpq    $8192, %rbx             # imm = 0x2000
+        jne     .LBB0_2
+.LBB0_5:                                # %after_loop
         popq    %rbx
+        popq    %r12
         popq    %r14
+        popq    %r15
         popq    %rbp
-        vzeroupper
+                vzeroupper
         retq
 .Lfunc_end0:
         .size   query, .Lfunc_end0-query
                                         # -- End function
 
         .section        ".note.GNU-stack","",@progbits
-
 ```
