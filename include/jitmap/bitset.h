@@ -202,16 +202,6 @@ class Bitset {
     return reinterpret_cast<char*>(&data_[0]);
   }
 
- private:
-  Ptr data_;
-
-  static_assert(N % (kBitsPerWord) == 0, "Bitset size must be a multiple of word_type");
-  static_assert(N >= kBitsPerWord, "Bitset size must be greater than word_type");
-
-  // Friend itself of other template parameters, used for accessing `data_`.
-  template <size_t M, typename OtherPtr>
-  friend class Bitset;
-
   // Return the capacity (in words) of the bitset.
   constexpr size_t size_words() const noexcept {
     return N / (CHAR_BIT * sizeof(word_type));
@@ -223,6 +213,16 @@ class Bitset {
   enable_if_writable<T1, word_type*> word() {
     return reinterpret_cast<word_type*>(&data_[0]);
   }
+
+ private:
+  Ptr data_;
+
+  static_assert(N % (kBitsPerWord) == 0, "Bitset size must be a multiple of word_type");
+  static_assert(N >= kBitsPerWord, "Bitset size must be greater than word_type");
+
+  // Friend itself of other template parameters, used for accessing `data_`.
+  template <size_t M, typename OtherPtr>
+  friend class Bitset;
 };
 
 // Create a bitset from a memory address.
@@ -242,10 +242,79 @@ auto allocate_aligned(size_t alignment, size_t length) {
   return std::unique_ptr<T[], DeleteAligned<T>>{raw};
 }
 
+template <size_t N, typename T>
+using OwnedBitset = Bitset<N, std::unique_ptr<T[], DeleteAligned<T>>>;
+
 template <size_t N>
-auto make_owned_bitset() {
+OwnedBitset<N, BitsetWordType> make_owned_bitset() {
   constexpr size_t kNumberWords = N / (sizeof(BitsetWordType) * CHAR_BIT);
   return make_bitset<N>(allocate_aligned<BitsetWordType>(kCacheLineSize, kNumberWords));
+}
+
+template <size_t N, typename Ptr>
+OwnedBitset<N, BitsetWordType> operator~(const Bitset<N, Ptr>& bitset) {
+  auto owned = make_owned_bitset<N>();
+
+  auto owned_word = owned.word();
+  auto bitset_word = bitset.word();
+
+  size_t remaining = owned.size_words();
+  while (remaining-- != 0UL) {
+    *owned_word++ = ~(*bitset_word++);
+  }
+
+  return owned;
+}
+
+template <size_t N, typename LeftPtr, typename RightPtr>
+OwnedBitset<N, BitsetWordType> operator&(const Bitset<N, LeftPtr>& lhs,
+                                         const Bitset<N, RightPtr>& rhs) {
+  auto owned = make_owned_bitset<N>();
+
+  auto owned_word = owned.word();
+  auto lhs_word = lhs.word();
+  auto rhs_word = rhs.word();
+
+  size_t remaining = owned.size_words();
+  while (remaining-- != 0UL) {
+    *owned_word++ = *lhs_word++ & *rhs_word++;
+  }
+
+  return owned;
+}
+
+template <size_t N, typename LeftPtr, typename RightPtr>
+OwnedBitset<N, BitsetWordType> operator|(const Bitset<N, LeftPtr>& lhs,
+                                         const Bitset<N, RightPtr>& rhs) {
+  auto owned = make_owned_bitset<N>();
+
+  auto owned_word = owned.word();
+  auto lhs_word = lhs.word();
+  auto rhs_word = rhs.word();
+
+  size_t remaining = owned.size_words();
+  while (remaining-- != 0UL) {
+    *owned_word++ = *lhs_word++ | *rhs_word++;
+  }
+
+  return owned;
+}
+
+template <size_t N, typename LeftPtr, typename RightPtr>
+OwnedBitset<N, BitsetWordType> operator^(const Bitset<N, LeftPtr>& lhs,
+                                         const Bitset<N, RightPtr>& rhs) {
+  auto owned = make_owned_bitset<N>();
+
+  auto owned_word = owned.word();
+  auto lhs_word = lhs.word();
+  auto rhs_word = rhs.word();
+
+  size_t remaining = owned.size_words();
+  while (remaining-- != 0UL) {
+    *owned_word++ = *lhs_word++ ^ *rhs_word++;
+  }
+
+  return owned;
 }
 
 }  // namespace jitmap

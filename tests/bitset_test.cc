@@ -137,6 +137,31 @@ TEST(BitsetTest, Operations) {
 
   result |= full;
   ASSERT_EQ(result_bits, UINT64_MAX);
+
+  auto not_empty = ~empty;
+  EXPECT_TRUE(not_empty.all());
+  EXPECT_FALSE(not_empty.none());
+  EXPECT_EQ(not_empty, full);
+
+  auto empty_or_full = empty | full;
+  EXPECT_TRUE(empty_or_full.all());
+  EXPECT_FALSE(empty_or_full.none());
+  EXPECT_EQ(empty_or_full, full);
+
+  auto empty_and_full = empty & full;
+  EXPECT_FALSE(empty_and_full.all());
+  EXPECT_TRUE(empty_and_full.none());
+  EXPECT_EQ(empty_and_full, empty);
+
+  auto empty_xor_full = empty ^ full;
+  EXPECT_TRUE(empty_xor_full.all());
+  EXPECT_FALSE(empty_xor_full.none());
+  EXPECT_EQ(empty_xor_full, full);
+
+  auto full_xor_full = full ^ full;
+  EXPECT_FALSE(full_xor_full.all());
+  EXPECT_TRUE(full_xor_full.none());
+  EXPECT_EQ(full_xor_full, empty);
 }
 
 TEST(BitsetTest, ErrorOnNullPtrConstructor) {
