@@ -20,10 +20,9 @@
 namespace jitmap {
 namespace query {
 
-class QueryExecTest : public QueryTest {
- protected:
-  ExecutionContext ctx{JitEngine::Make()};
-};
+class QueryExecTest : public QueryTest {};
+
+ExecutionContext ctx{JitEngine::Make()};
 
 using testing::ContainerEq;
 using testing::ElementsAre;
@@ -70,7 +69,7 @@ TEST_F(QueryExecTest, EvalInvalidParameters) {
   std::vector<char> result(kBytesPerContainer, 0x00);
   std::vector<const char*> inputs{};
 
-  auto not_a = Query::Make("not_a", "!a", &ctx);
+  auto not_a = Query::Make("invalid_param", "!a", &ctx);
   EXPECT_THROW(not_a->Eval(nullptr, nullptr), Exception);
   EXPECT_THROW(not_a->Eval(nullptr, result.data()), Exception);
   inputs = {nullptr};
@@ -83,13 +82,13 @@ TEST_F(QueryExecTest, Eval) {
   std::vector<char> result(kBytesPerContainer, 0x00);
   std::vector<const char*> inputs{};
 
-  auto not_a = Query::Make("not_a", "!a", &ctx);
+  auto not_a = Query::Make("single_param", "!a", &ctx);
 
   inputs = {a.data()};
   not_a->Eval(inputs.data(), result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
 
-  auto a_and_b = Query::Make("a_and_b", "a & b", &ctx);
+  auto a_and_b = Query::Make("double_param", "a & b", &ctx);
 
   inputs = {a.data(), b.data()};
   a_and_b->Eval(inputs.data(), result.data());
@@ -99,6 +98,26 @@ TEST_F(QueryExecTest, Eval) {
   inputs = {b.data(), b.data()};
   a_and_b->Eval(inputs.data(), result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
+}
+
+using MissingPolicy = EvaluationContext::MissingPolicy;
+
+TEST_F(QueryExecTest, EvalWithMissingPolicy) {
+  std::vector<char> result(kBytesPerContainer, 0x00);
+  std::vector<const char*> inputs{nullptr};
+
+  auto q = Query::Make("another_not_a", "!a", &ctx);
+
+  EvaluationContext eval_ctx;
+  EXPECT_THROW(q->Eval(eval_ctx, inputs.data(), result.data()), Exception);
+
+  eval_ctx.SetMissingPolicy(MissingPolicy::REPLACE_WITH_EMPTY);
+  q->Eval(eval_ctx, inputs.data(), result.data());
+  EXPECT_THAT(result, testing::Each(0xFF));
+
+  eval_ctx.SetMissingPolicy(MissingPolicy::REPLACE_WITH_FULL);
+  q->Eval(eval_ctx, inputs.data(), result.data());
+  EXPECT_THAT(result, testing::Each(0x00));
 }
 
 }  // namespace query

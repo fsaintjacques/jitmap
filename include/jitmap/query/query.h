@@ -25,6 +25,7 @@ namespace query {
 
 class Expr;
 class ExecutionContext;
+class EvaluationContext;
 
 class QueryImpl;
 
@@ -52,9 +53,10 @@ class Query : util::Pimpl<QueryImpl> {
 
   // Evaluate the expression on dense bitmaps.
   //
+  // \param[in] ctx, evaluation context, see `EvaluationContext`.
   // \param[in] inputs, pointers to input bitmaps, see further note on ordering.
-  // \param[in] output, pointer where the resulting bitmap will be written to,
-  //                    must not be nullptr.
+  // \param[out] output, pointer where the resulting bitmap will be written to,
+  //                     must not be nullptr.
   //
   // \throws Exception if any of the inputs/output pointers are nullptr.
   //
@@ -74,6 +76,7 @@ class Query : util::Pimpl<QueryImpl> {
   // auto ordered_bitmaps = ReorderInputs({"a": a, "b": b, "c": c}, order);
   // query->Eval(ordered_bitmaps, output);
   // ```
+  void Eval(const EvaluationContext& ctx, const char** inputs, char* output);
   void Eval(const char** inputs, char* output);
 
   // Return the referenced variables and the expected order.o
@@ -104,6 +107,30 @@ class ExecutionContext {
 
  private:
   std::shared_ptr<JitEngine> jit_;
+};
+
+class EvaluationContext {
+ public:
+  // The MissingPolicy indicates how `Eval` behave when one or more of the
+  // input pointers are nullptr. This is syntactic sugar to allow passing a
+  // sparse array of bitmaps, e.g. in the case of roaring bitmap when some of
+  // the partitions don't have containers.
+  enum MissingPolicy {
+    // Abort the computation and throw an exception.
+    ERROR = 0,
+    // Replace all missing bitmaps pointer with a pointer pointing to an empty
+    // bitmap.
+    REPLACE_WITH_EMPTY,
+    // Replace all missing bitmaps pointer with a pointer pointing to a full
+    // bitmap.
+    REPLACE_WITH_FULL,
+  };
+
+  MissingPolicy missing_policy() const { return missing_policy_; }
+  void SetMissingPolicy(MissingPolicy policy) { missing_policy_ = policy; }
+
+ private:
+  MissingPolicy missing_policy_ = ERROR;
 };
 
 }  // namespace query

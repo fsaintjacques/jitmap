@@ -97,17 +97,61 @@ const std::string& Query::name() const { return impl().name(); }
 const Expr& Query::expr() const { return impl().expr(); }
 const std::vector<std::string>& Query::variables() const { return impl().variables(); }
 
-void Query::Eval(const char** inputs, char* output) {
+template <char FillByte>
+class array_bitmap : public std::array<char, kBytesPerContainer> {
+ public:
+  array_bitmap() { fill(FillByte); }
+};
+
+// Private read-only full and empty bitmap. Used for EvaluationContext::MissingPolicy;
+static const array_bitmap<static_cast<char>(0x00)> kEmptyBitmap;
+static const array_bitmap<static_cast<char>(0xFF)> kFullBitmap;
+
+using MissingPolicy = EvaluationContext::MissingPolicy;
+
+static inline const char* CoalesceInputPointer(const char* input,
+                                               const std::string& variable,
+                                               MissingPolicy policy) {
+  if (input != nullptr) {
+    return input;
+  }
+
+  switch (policy) {
+    case MissingPolicy::ERROR:
+      throw Exception("Missing pointer for bitmap '", variable, ",");
+    case MissingPolicy::REPLACE_WITH_EMPTY:
+      return kEmptyBitmap.data();
+    case MissingPolicy::REPLACE_WITH_FULL:
+      return kFullBitmap.data();
+  }
+
+  throw Exception("Unreachable in ", __FUNCTION__);
+}
+
+static inline std::vector<const char*> FixupInputs(const std::vector<std::string>& vars,
+                                                   const char** inputs,
+                                                   MissingPolicy policy) {
+  auto n_inputs = vars.size();
+  std::vector<const char*> addrs;
+  for (size_t i = 0; i < n_inputs; i++) {
+    addrs.push_back(CoalesceInputPointer(inputs[i], vars[i], policy));
+  }
+
+  return addrs;
+}
+
+void Query::Eval(const EvaluationContext& eval_ctx, const char** inputs, char* output) {
   JITMAP_PRE_NE(inputs, nullptr);
   JITMAP_PRE_NE(output, nullptr);
 
-  auto n_inputs = variables().size();
-  for (size_t i = 0; i < n_inputs; i++) {
-    JITMAP_PRE_NE(inputs[i], nullptr);
-  }
-
+  auto addrs = FixupInputs(variables(), inputs, eval_ctx.missing_policy());
   auto eval_fn = impl().dense_eval_fn();
-  eval_fn(inputs, output);
+  eval_fn(addrs.data(), output);
+}
+
+void Query::Eval(const char** inputs, char* output) {
+  EvaluationContext ctx;
+  Eval(ctx, inputs, output);
 }
 
 }  // namespace query
