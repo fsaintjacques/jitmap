@@ -16,7 +16,7 @@ binary expressions on bitmaps. Some examples:
   rules, bitmaps are used as a first-pass optimization to lower the number of
   campaigns' rules to evaluate on each incoming event.
 
-jitmap compiles logical expresion into native functions that takes multiple
+jitmap compiles logical expression into native functions that takes multiple
 inputs dense bitmaps pointers, e.g. `const char**`, and write the result in a
 destination pointer, e.g. `const char*`. The signature of such generated
 functions are `void fn(const char**, char*)`. The functions are then callable
@@ -27,11 +27,11 @@ The following snippet shows an example of what jitmap achieves:
 ```C
 typedef void (*dense_eval_fn)(const char**, char*);
 
-dense_eval_fn a_and_b = jitmap_compile("a_and_b", "a ^ b");
-const char** addrs[2] = {&a, &b};
+dense_eval_fn a_and_b = jitmap_compile("a_and_b_and_c", "a & b & c");
+const char** addrs[3] = {&a, &b, &c};
 
-// `output` will now contains the result of `a & b` applied vertically likely
-// using // vectorized instruction available on the host running this code, as
+// `output` will now contains the result of `a & b & c` applied vertically
+// using vectorized instruction available on the host running this code, as
 // opposed to where the code was compiled.
 a_and_b(addrs, &output);
 ```
