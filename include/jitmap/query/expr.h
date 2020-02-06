@@ -93,7 +93,7 @@ class UnaryOpExpr : public OpExpr {
   explicit UnaryOpExpr(Expr* expr) : operand_(expr) {}
 
   Expr* operand() const { return operand_; }
-  void SetOperand(Expr* expr) { operand_ = expr; }
+  void set_operand(Expr* expr) { operand_ = expr; }
 
  private:
   Expr* operand_;
@@ -104,10 +104,10 @@ class BinaryOpExpr : public OpExpr {
   BinaryOpExpr(Expr* lhs, Expr* rhs) : left_operand_(lhs), right_operand_(rhs) {}
 
   Expr* left_operand() const { return left_operand_; }
-  void SetLeftOperand(Expr* left) { left_operand_ = left; }
+  void set_left_operand(Expr* left) { left_operand_ = left; }
 
   Expr* right_operand() const { return right_operand_; }
-  void SetRightOperand(Expr* right) { right_operand_ = right; }
+  void set_right_operand(Expr* right) { right_operand_ = right; }
 
  private:
   Expr* left_operand_;

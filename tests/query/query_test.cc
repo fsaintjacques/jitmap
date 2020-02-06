@@ -111,11 +111,11 @@ TEST_F(QueryExecTest, EvalWithMissingPolicy) {
   EvaluationContext eval_ctx;
   EXPECT_THROW(q->Eval(eval_ctx, inputs.data(), result.data()), Exception);
 
-  eval_ctx.SetMissingPolicy(MissingPolicy::REPLACE_WITH_EMPTY);
+  eval_ctx.set_missing_policy(MissingPolicy::REPLACE_WITH_EMPTY);
   q->Eval(eval_ctx, inputs.data(), result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
 
-  eval_ctx.SetMissingPolicy(MissingPolicy::REPLACE_WITH_FULL);
+  eval_ctx.set_missing_policy(MissingPolicy::REPLACE_WITH_FULL);
   q->Eval(eval_ctx, inputs.data(), result.data());
   EXPECT_THAT(result, testing::Each(0x00));
 }

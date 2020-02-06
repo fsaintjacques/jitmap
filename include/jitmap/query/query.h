@@ -127,7 +127,7 @@ class EvaluationContext {
   };
 
   MissingPolicy missing_policy() const { return missing_policy_; }
-  void SetMissingPolicy(MissingPolicy policy) { missing_policy_ = policy; }
+  void set_missing_policy(MissingPolicy policy) { missing_policy_ = policy; }
 
  private:
   MissingPolicy missing_policy_ = ERROR;

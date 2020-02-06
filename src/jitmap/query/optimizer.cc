@@ -174,14 +174,14 @@ struct BottonUpVisitor {
 
   template <typename E>
   enable_if_unary_op<E, Expr*> operator()(E* op) {
-    op->SetOperand((op->operand()->Visit(*this)));
+    op->set_operand((op->operand()->Visit(*this)));
     return visitor(op);
   }
 
   template <typename E>
   enable_if_binary_op<E, Expr*> operator()(E* op) {
-    op->SetLeftOperand(op->left_operand()->Visit(*this));
-    op->SetRightOperand(op->right_operand()->Visit(*this));
+    op->set_left_operand(op->left_operand()->Visit(*this));
+    op->set_right_operand(op->right_operand()->Visit(*this));
     return visitor(op);
   }
 
