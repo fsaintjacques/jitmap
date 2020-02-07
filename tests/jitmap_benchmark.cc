@@ -44,7 +44,7 @@ static void JitIntersection2(benchmark::State& state) {
   auto query = query::Query::Make("benchmark_query_2", "a & b", &engine);
 
   for (auto _ : state) {
-    query->Eval(inputs.data(), output.data());
+    query->Eval(inputs, output.data());
   }
 
   state.SetBytesProcessed(kBytesPerContainer * 2 * state.iterations());
@@ -68,7 +68,7 @@ static void JitIntersection3(benchmark::State& state) {
   auto query = query::Query::Make("benchmark_query_3", "a & b & c", &engine);
 
   for (auto _ : state) {
-    query->Eval(inputs.data(), output.data());
+    query->Eval(inputs, output.data());
   }
 
   state.SetBytesProcessed(kBytesPerContainer * 3 * state.iterations());

@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "jitmap/jitmap.h"
 #include "jitmap/query/compiler.h"
 #include "jitmap/query/optimizer.h"
 #include "jitmap/query/parser.h"
@@ -128,30 +129,25 @@ static inline const char* CoalesceInputPointer(const char* input,
   throw Exception("Unreachable in ", __FUNCTION__);
 }
 
-static inline std::vector<const char*> FixupInputs(const std::vector<std::string>& vars,
-                                                   const char** inputs,
-                                                   MissingPolicy policy) {
-  auto n_inputs = vars.size();
-  std::vector<const char*> addrs;
-  for (size_t i = 0; i < n_inputs; i++) {
-    addrs.push_back(CoalesceInputPointer(inputs[i], vars[i], policy));
-  }
+void Query::Eval(const EvaluationContext& eval_ctx, std::vector<const char*> inputs,
+                 char* output) {
+  auto vars = variables();
 
-  return addrs;
-}
-
-void Query::Eval(const EvaluationContext& eval_ctx, const char** inputs, char* output) {
-  JITMAP_PRE_NE(inputs, nullptr);
+  JITMAP_PRE_EQ(vars.size(), inputs.size());
   JITMAP_PRE_NE(output, nullptr);
 
-  auto addrs = FixupInputs(variables(), inputs, eval_ctx.missing_policy());
+  auto policy = eval_ctx.missing_policy();
+  for (size_t i = 0; i < inputs.size(); i++) {
+    inputs[i] = CoalesceInputPointer(inputs[i], vars[i], policy);
+  }
+
   auto eval_fn = impl().dense_eval_fn();
-  eval_fn(addrs.data(), output);
+  eval_fn(inputs.data(), output);
 }
 
-void Query::Eval(const char** inputs, char* output) {
+void Query::Eval(std::vector<const char*> inputs, char* output) {
   EvaluationContext ctx;
-  Eval(ctx, inputs, output);
+  Eval(ctx, std::move(inputs), output);
 }
 
 }  // namespace query

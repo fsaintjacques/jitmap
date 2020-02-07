@@ -32,10 +32,13 @@ class JitTest : public QueryTest {
     auto [_, inputs] = InitInputs(input_words);
     JITMAP_UNUSED(_);
 
+    auto variables = query->variables();
+    EXPECT_EQ(inputs.size(), variables.size());
+
     std::vector<char> output(kBytesPerContainer, 0UL);
     EXPECT_THAT(output, testing::Each(0UL));
 
-    query->Eval(inputs.data(), output.data());
+    query->Eval(std::move(inputs), output.data());
     EXPECT_THAT(output, testing::Each(output_word));
   }
 
@@ -46,12 +49,12 @@ class JitTest : public QueryTest {
       std::vector<char> input_words) {
     size_t n_bitmaps = input_words.size();
 
-    std::vector<std::vector<char>> bitmaps;
-    std::vector<const char*> inputs;
+    std::vector<std::vector<char>> bitmaps(n_bitmaps);
+    std::vector<const char*> inputs(n_bitmaps);
     for (size_t i = 0; i < n_bitmaps; i++) {
       auto repeated_word = input_words[i];
-      bitmaps.emplace_back(kBytesPerContainer, repeated_word);
-      inputs.emplace_back(bitmaps[i].data());
+      bitmaps[i] = std::vector<char>(kBytesPerContainer, repeated_word);
+      inputs[i] = bitmaps[i].data();
       EXPECT_THAT(bitmaps[i], testing::Each(repeated_word));
     }
 
@@ -84,7 +87,7 @@ TEST_F(JitTest, CompileAndExecuteTest) {
   AssertQueryResult("a ^ b", {a, b}, a ^ b);
 
   AssertQueryResult("full ^ b", {full, b}, full ^ b);
-  AssertQueryResult("empty | !empty", {empty, empty}, full);
+  AssertQueryResult("empty | !empty", {empty}, full);
 
   AssertQueryResult("a & b & c & d & e", {a, b, c, d, e}, a & b & c & d & e);
   AssertQueryResult("a | b | c | d | e", {a, b, c, d, e}, a | b | c | d | e);

@@ -70,10 +70,11 @@ TEST_F(QueryExecTest, EvalInvalidParameters) {
   std::vector<const char*> inputs{};
 
   auto not_a = Query::Make("invalid_param", "!a", &ctx);
-  EXPECT_THROW(not_a->Eval(nullptr, nullptr), Exception);
-  EXPECT_THROW(not_a->Eval(nullptr, result.data()), Exception);
+  std::vector<const char*> empty;
+  EXPECT_THROW(not_a->Eval(empty, nullptr), Exception);
+  EXPECT_THROW(not_a->Eval(empty, result.data()), Exception);
   inputs = {nullptr};
-  EXPECT_THROW(not_a->Eval(inputs.data(), result.data()), Exception);
+  EXPECT_THROW(not_a->Eval(inputs, result.data()), Exception);
 }
 
 TEST_F(QueryExecTest, Eval) {
@@ -85,18 +86,18 @@ TEST_F(QueryExecTest, Eval) {
   auto not_a = Query::Make("single_param", "!a", &ctx);
 
   inputs = {a.data()};
-  not_a->Eval(inputs.data(), result.data());
+  not_a->Eval(inputs, result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
 
   auto a_and_b = Query::Make("double_param", "a & b", &ctx);
 
   inputs = {a.data(), b.data()};
-  a_and_b->Eval(inputs.data(), result.data());
+  a_and_b->Eval(inputs, result.data());
   EXPECT_THAT(result, testing::Each(0x00));
 
   // It can runs with the same input twice.
   inputs = {b.data(), b.data()};
-  a_and_b->Eval(inputs.data(), result.data());
+  a_and_b->Eval(inputs, result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
 }
 
@@ -109,14 +110,14 @@ TEST_F(QueryExecTest, EvalWithMissingPolicy) {
   auto q = Query::Make("another_not_a", "!a", &ctx);
 
   EvaluationContext eval_ctx;
-  EXPECT_THROW(q->Eval(eval_ctx, inputs.data(), result.data()), Exception);
+  EXPECT_THROW(q->Eval(eval_ctx, inputs, result.data()), Exception);
 
   eval_ctx.set_missing_policy(MissingPolicy::REPLACE_WITH_EMPTY);
-  q->Eval(eval_ctx, inputs.data(), result.data());
+  q->Eval(eval_ctx, inputs, result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
 
   eval_ctx.set_missing_policy(MissingPolicy::REPLACE_WITH_FULL);
-  q->Eval(eval_ctx, inputs.data(), result.data());
+  q->Eval(eval_ctx, inputs, result.data());
   EXPECT_THAT(result, testing::Each(0x00));
 }
 

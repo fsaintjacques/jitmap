@@ -76,8 +76,8 @@ class Query : util::Pimpl<QueryImpl> {
   // auto ordered_bitmaps = ReorderInputs({"a": a, "b": b, "c": c}, order);
   // query->Eval(ordered_bitmaps, output);
   // ```
-  void Eval(const EvaluationContext& ctx, const char** inputs, char* output);
-  void Eval(const char** inputs, char* output);
+  void Eval(const EvaluationContext& ctx, std::vector<const char*> inputs, char* output);
+  void Eval(std::vector<const char*> inputs, char* output);
 
   // Return the referenced variables and the expected order.o
   //
