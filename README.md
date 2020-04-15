@@ -1,49 +1,53 @@
 # jitmap: Jitted bitmaps
 
-jitmap is a small library providing an execution engine evaluating logical
-binary expressions on bitmaps. Some examples:
+jitmap is a small library providing an execution engine for logical binary
+expressions on bitmaps. Some examples where this is relevant:
 
-* In search engines, posting lists are often represented by sequence of
-  integers, or bitmaps. Evaluating a search term (logical expression on
-  keywords) can be implemented by a logical expression on bitmaps.
+* In search engines, posting lists (sorted sequences of integers) are encoded
+  with bitmaps. Evaluating a search query (logical expression on
+  keywords) can be implemented with logical expression on bitmaps.
 
-* In columnar databases, bitmaps are used to represent selection vectors,
-  themselves the intermediary representation of the results of predicate filter
-  on rows. The bitmaps are then combined in a final bitmap, the predicate
-  expression transformed in a logical expression on bitmaps.
+* In columnar databases, selection vectors (index masks) are encoded with
+  bitmaps, the results of predicate on column expressions. The bitmaps are then
+  combined in a final bitmap.
 
-* In stream system with rule engines, e.g. adtech bid filtering on campaign
-  rules, bitmaps are used as a first-pass optimization to lower the number of
-  campaigns' rules to evaluate on each incoming event.
+* In stream processing systems with rule engines, e.g. adtech bid requests
+  filtering with campaign rules, bitmaps are used as a first-pass optimization
+  to lower the number of (costly) rules to evaluate on each incoming event.
 
-jitmap compiles logical expression into native functions that takes multiple
-inputs dense bitmaps pointers, e.g. `const char**`, and write the result in a
-destination pointer, e.g. `const char*`. The signature of such generated
-functions are `void fn(const char**, char*)`. The functions are then callable
-in the same address space.
+jitmap compiles logical expressions into native functions with signature
+`void fn(const char**, char*)`. The functions are optimized to minimize memory
+transfers and uses the fastest vector instruction set provided by the host.
 
 The following snippet shows an example of what jitmap achieves:
 
 ```C
 typedef void (*dense_eval_fn)(const char**, char*);
 
-dense_eval_fn a_and_b = jitmap_compile("a_and_b_and_c", "a & b & c");
-const char** addrs[3] = {&a, &b, &c};
+// a, b, c, and output are pointers to bitmap
+char* a, b, c, output;
+// Note that for now, jitmap only supports static sized bitmaps.
+const char** inputs[3] = {a, b, c};
 
-// `output` will now contains the result of `a & b & c` applied vertically
-// using vectorized instruction available on the host running this code, as
-// opposed to where the code was compiled.
-a_and_b(addrs, &output);
+// Compile an expression returned as a function pointer. The function can be
+// called from any thread in the same address space and has a global lifetime.
+// The generated symbol will be exposed to gdb and linux's perf utility.
+const char* symbol_name = "a_and_b_and_c";
+dense_eval_fn a_and_b_and_c = jitmap_compile(symbol_name, "a & b & c");
+
+// The result of `a & b & c` will be stored in `output`, applied vertically
+// using vectorized instruction available on the host.
+a_and_b_and_c(inputs, output);
 ```
 
 ## Logical expression language
 
 jitmap offers a small DSL language to evaluate bitwise operations on bitmaps.
 The language supports variables (named bitmap), empty/full literals, and basic
-operators (not, and, or xor).
+operators: not `!`, and `&`, or `!`, xor `^`.
 
-A query takes an expression and a list of bitmaps and excute the expression on
-the bitmaps resulting in an new bitmap.
+A query takes an expression and a list of bitmaps and execute the expression on
+the bitmaps resulting in a new bitmap.
 
 ### Supported expressions
 
@@ -63,18 +67,18 @@ the bitmaps resulting in an new bitmap.
 # a AND b
 a & b
 
-# $empty AND (a OR b) XOR c
-($0 & (a | b) ^ c)
+# 1 AND (a OR b) XOR c
+($1 & (a | b) ^ c)
 ```
 
 ## Developing/Debugging
 
 ### *jitmap-ir* tool
 
-The *jitmap-ir* binary takes an expression as first input argument and dumps the
-generated LLVM' IR to stdout. It is useful to debug and peek at the generated
-code. Using LLVM command line utilies, we can also look at the expected
-generated assembly for any platform.
+The *jitmap-ir* command line utility takes an expression as first input argument
+and dumps the generated LLVM' IR to stdout. It is useful to debug and peek at
+the generated code. Using LLVM command line utilies, we can also look at the
+expected generated assembly for any platform.
 
 ```llvm
 # tools/jitmap-ir "(a & b) | (c & c) | (c ^ d) | (c & b) | (d ^ a)"
@@ -249,3 +253,60 @@ query:                                  # @query
 
         .section        ".note.GNU-stack","",@progbits
 ```
+
+## Symbols with linux's perf
+
+By default, perf will not be able to recognize the generated functions since the
+symbols are not available statically. Luckily, perf has two mechanisms for jit
+to register symbols. LLVM's jit use the jitdump [1] facility. At the time of
+writing this, one needs to patch perf with [2], see commit 077a9b7bd1 for more
+information.
+
+```
+# The `-k1` is required for jitdump to work.
+$ perf record -k1 jitmap_benchmark
+
+# By default, the output will be useless, since each instruction will be shown
+# instead of grouped by symbols.
+$ perf report --stdio
+...
+# Overhead  Command          Shared Object        Symbol
+# ........  ...............  ...................  ....................................................................................
+#
+    29.09%  jitmap_benchmar  jitmap_benchmark     [.] jitmap::StaticBenchmark<jitmap::IntersectionFunctor<(jitmap::PopCountOption)1> >
+    20.08%  jitmap_benchmar  jitmap_benchmark     [.] jitmap::StaticBenchmark<jitmap::IntersectionFunctor<(jitmap::PopCountOption)0> >
+     1.78%  jitmap_benchmar  [JIT] tid 24013      [.] 0x00007f628c6cb045
+     1.61%  jitmap_benchmar  [JIT] tid 24013      [.] 0x00007f628c6cb053
+     1.59%  jitmap_benchmar  [JIT] tid 24013      [.] 0x00007f628c6cb197
+     1.55%  jitmap_benchmar  [JIT] tid 24013      [.] 0x00007f628c6cb126
+     1.51%  jitmap_benchmar  [JIT] tid 24013      [.] 0x00007f628c6cb035
+     1.39%  jitmap_benchmar  [JIT] tid 24013      [.] 0x00007f628c6cb027
+
+# We must process the generate perf.data file by injecting symbols name
+$ perf inject --jit -i perf.data -o perf.jit.data && mv perf.jit.data perf.data
+$ perf report --stdio
+...
+# Overhead  Command          Shared Object        Symbol
+# ........  ...............  ...................  ....................................................................................
+#
+    29.09%  jitmap_benchmar  jitmap_benchmark     [.] jitmap::StaticBenchmark<jitmap::IntersectionFunctor<(jitmap::PopCountOption)1> >
+    20.08%  jitmap_benchmar  jitmap_benchmark     [.] jitmap::StaticBenchmark<jitmap::IntersectionFunctor<(jitmap::PopCountOption)0> >
+     6.48%  jitmap_benchmar  jitted-24013-16.so   [.] and_2_popcount
+     6.46%  jitmap_benchmar  jitted-24013-32.so   [.] and_4_popcount
+     6.42%  jitmap_benchmar  jitted-24013-46.so   [.] and_8_popcount
+     6.19%  jitmap_benchmar  jitted-24013-77.so   [.] and_4
+     6.19%  jitmap_benchmar  jitted-24013-61.so   [.] and_2
+     4.59%  jitmap_benchmar  jitted-24013-91.so   [.] and_8
+```
+
+[1] https://elixir.bootlin.com/linux/v4.10/source/tools/perf/Documentation/jitdump-specification.txt
+
+[2] https://lore.kernel.org/lkml/20191003105716.GB23291@krava/T/#u
+
+# TODO
+
+* Supports dynamic sized bitmaps
+* Implement roaring-bitmap-like compressed bitmaps
+* Get https://reviews.llvm.org/D67383 approved and merged to benefit from
+  Tree-Height-Reduction pass.
+* Provide a C front-end api.

@@ -1,4 +1,4 @@
-Checks: 'bugprone-*,cert-*,clang-analyzer-*,cppcoreguidelines-*,-cppcoreguidelines-special-member-functions,google-*,modernize-*performance-*,readability-*,-readability-convert-member-functions-to-static'
+Checks: 'bugprone-*,cert-*,-cert-err58-cpp,clang-analyzer-*,cppcoreguidelines-*,-cppcoreguidelines-special-member-functions,-cppcoreguidelines-owning-memory,google-*,-google-runtime-references,modernize-*performance-*,readability-*,-readability-convert-member-functions-to-static'
 CheckOptions:
   - key:             readability-braces-around-statements.ShortStatementLines
     value:           '1'
