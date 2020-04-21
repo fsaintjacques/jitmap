@@ -15,68 +15,108 @@
 #include <benchmark/benchmark.h>
 
 #include <bitset>
+#include <functional>
+#include <string_view>
 #include <vector>
 
 #include <jitmap/jitmap.h>
 #include <jitmap/query/compiler.h>
 #include <jitmap/query/query.h>
 #include <jitmap/size.h>
+#include <jitmap/util/aligned.h>
 
 namespace jitmap {
 
-using DenseBitmap = std::bitset<kBitsPerContainer>;
+enum PopCountOption {
+  WithoutPopCount = 0,
+  WithPopCount,
+};
 
-static void StaticIntersection2(benchmark::State& state) {
-  DenseBitmap a, b;
+template <PopCountOption Opt>
+class TreeVisitorFunctor {
+ public:
+  explicit TreeVisitorFunctor(size_t n_inputs) { inputs.resize(n_inputs); }
 
-  for (auto _ : state) {
-    benchmark::DoNotOptimize(a & b);
+  int32_t operator()() {
+    output = inputs[0];
+
+    auto n_inputs = inputs.size();
+    for (size_t i = 1; i < n_inputs; i++) {
+      output &= inputs[i];
+    }
+
+    return Opt == WithPopCount ? output.count() : output.all();
   }
 
-  state.SetBytesProcessed(kBytesPerContainer * 2 * state.iterations());
-}
+ private:
+  std::vector<std::bitset<kBitsPerContainer>> inputs;
+  std::bitset<kBitsPerContainer> output;
+};
 
-static void JitIntersection2(benchmark::State& state) {
-  std::array<char, kBytesPerContainer> a, b, output;
-  std::vector<const char*> inputs{a.data(), b.data()};
+template <PopCountOption Opt>
+class JitFunctor {
+ public:
+  explicit JitFunctor(size_t n_inputs) {
+    auto query_name = util::StaticFmt("and_", n_inputs);
+    query = query::Query::Make(query_name, QueryForInputs(n_inputs), &engine);
+    ctx.set_popcount(Opt == WithPopCount);
 
+    bitmaps.resize(n_inputs);
+    for (const auto& input : bitmaps) inputs.push_back(input.data());
+  }
+
+  int32_t operator()() { return query->EvalUnsafe(ctx, inputs, output.data()); }
+
+  std::string QueryForInputs(size_t n) {
+    std::stringstream ss;
+
+    ss << "i_0";
+    for (size_t i = 1; i < n; i++) {
+      ss << " & "
+         << "i_" << i;
+    }
+
+    return ss.str();
+  }
+
+ private:
+  std::shared_ptr<query::Query> query;
+  query::EvaluationContext ctx;
   query::ExecutionContext engine{query::JitEngine::Make()};
-  auto query = query::Query::Make("benchmark_query_2", "a & b", &engine);
 
+  std::vector<aligned_array<char, kBytesPerContainer>> bitmaps;
+  std::vector<const char*> inputs;
+  aligned_array<char, kBytesPerContainer> output;
+};
+
+template <typename ComputeFunctor>
+static void BasicBenchmark(benchmark::State& state) {
+  auto n_bitmaps = static_cast<size_t>(state.range(0));
+  std::vector<aligned_array<char, kBytesPerContainer>> bitmaps{n_bitmaps};
+  aligned_array<char, kBytesPerContainer> output;
+
+  std::vector<const char*> inputs;
+  for (const auto& input : bitmaps) inputs.push_back(input.data());
+
+  ComputeFunctor compute{n_bitmaps};
   for (auto _ : state) {
-    query->Eval(inputs, output.data());
+    benchmark::DoNotOptimize(compute());
   }
 
-  state.SetBytesProcessed(kBytesPerContainer * 2 * state.iterations());
+  state.SetBytesProcessed(kBytesPerContainer * n_bitmaps * state.iterations());
 }
 
-static void StaticIntersection3(benchmark::State& state) {
-  DenseBitmap a, b, c;
-
-  for (auto _ : state) {
-    benchmark::DoNotOptimize(a & b & c);
-  }
-
-  state.SetBytesProcessed(kBytesPerContainer * 3 * state.iterations());
-}
-
-static void JitIntersection3(benchmark::State& state) {
-  std::array<char, kBytesPerContainer> a, b, c, output;
-  std::vector<const char*> inputs{a.data(), b.data(), c.data()};
-
-  query::ExecutionContext engine{query::JitEngine::Make()};
-  auto query = query::Query::Make("benchmark_query_3", "a & b & c", &engine);
-
-  for (auto _ : state) {
-    query->Eval(inputs, output.data());
-  }
-
-  state.SetBytesProcessed(kBytesPerContainer * 3 * state.iterations());
-}
-
-BENCHMARK(StaticIntersection2);
-BENCHMARK(JitIntersection2);
-BENCHMARK(StaticIntersection3);
-BENCHMARK(JitIntersection3);
+BENCHMARK_TEMPLATE(BasicBenchmark, TreeVisitorFunctor<WithPopCount>)
+    ->RangeMultiplier(2)
+    ->Range(2, 8);
+BENCHMARK_TEMPLATE(BasicBenchmark, TreeVisitorFunctor<WithoutPopCount>)
+    ->RangeMultiplier(2)
+    ->Range(2, 8);
+BENCHMARK_TEMPLATE(BasicBenchmark, JitFunctor<WithPopCount>)
+    ->RangeMultiplier(2)
+    ->Range(2, 8);
+BENCHMARK_TEMPLATE(BasicBenchmark, JitFunctor<WithoutPopCount>)
+    ->RangeMultiplier(2)
+    ->Range(2, 8);
 
 }  // namespace jitmap

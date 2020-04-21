@@ -29,6 +29,8 @@ class EvaluationContext;
 
 class QueryImpl;
 
+constexpr int64_t kUnknownPopCount = -1;
+
 class Query : util::Pimpl<QueryImpl> {
  public:
   // Create a new query object based on an expression.
@@ -54,9 +56,11 @@ class Query : util::Pimpl<QueryImpl> {
   // Evaluate the expression on dense bitmaps.
   //
   // \param[in] ctx, evaluation context, see `EvaluationContext`.
-  // \param[in] inputs, pointers to input bitmaps, see further note on ordering.
-  // \param[out] output, pointer where the resulting bitmap will be written to,
-  //                     must not be nullptr.
+  // \param[in] ins, pointers to input bitmaps, see further note on ordering.
+  // \param[out] out, pointer where the resulting bitmap will be written to,
+  //                  must not be nullptr.
+  // \return kUnknownPopCount if popcount is not computed, else the popcount of
+  //         the resulting bitmap.
   //
   // \throws Exception if any of the inputs/output pointers are nullptr.
   //
@@ -76,8 +80,11 @@ class Query : util::Pimpl<QueryImpl> {
   // auto ordered_bitmaps = ReorderInputs({"a": a, "b": b, "c": c}, order);
   // query->Eval(ordered_bitmaps, output);
   // ```
-  void Eval(const EvaluationContext& ctx, std::vector<const char*> inputs, char* output);
-  void Eval(std::vector<const char*> inputs, char* output);
+  int32_t Eval(const EvaluationContext& ctx, std::vector<const char*> ins, char* out);
+  int32_t Eval(std::vector<const char*> ins, char* out);
+
+  int32_t EvalUnsafe(const EvaluationContext& ctx, std::vector<const char*>& ins,
+                     char* out);
 
   // Return the referenced variables and the expected order.o
   //
@@ -129,8 +136,12 @@ class EvaluationContext {
   MissingPolicy missing_policy() const { return missing_policy_; }
   void set_missing_policy(MissingPolicy policy) { missing_policy_ = policy; }
 
+  bool popcount() const { return popcount_; }
+  void set_popcount(bool popcount) { popcount_ = popcount; }
+
  private:
   MissingPolicy missing_policy_ = ERROR;
+  bool popcount_ = false;
 };
 
 }  // namespace query

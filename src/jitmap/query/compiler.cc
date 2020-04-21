@@ -16,6 +16,7 @@
 
 #include <llvm/ADT/Triple.h>
 #include <llvm/Analysis/TargetTransformInfo.h>
+#include <llvm/CodeGen/TargetPassConfig.h>
 #include <llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
@@ -24,11 +25,13 @@
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/IPO.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/Transforms/Utils.h>
 #include <llvm/Transforms/Vectorize.h>
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -41,6 +44,7 @@
 
 #include "codegen.h"
 #include "jitmap/query/compiler.h"
+#include "jitmap/util/compiler.h"
 
 namespace orc = llvm::orc;
 
@@ -138,8 +142,8 @@ std::unique_ptr<orc::LLJIT> InitLLJIT(orc::JITTargetMachineBuilder machine_build
                            .create());
 }
 
-auto AsThreadSafeModule(ExpressionCodeGen::ModuleAndContext module_context) {
-  auto [module, context] = std::move(module_context);
+auto AsThreadSafeModule(ExpressionCodeGen::ContextAndModule ctx_module) {
+  auto [context, module] = std::move(ctx_module);
   return orc::ThreadSafeModule(std::move(module), std::move(context));
 }
 
@@ -148,33 +152,39 @@ class JitEngineImpl {
   JitEngineImpl(orc::JITTargetMachineBuilder machine_builder, const CompilerOptions& opts)
       : host_(ExpectOrRaise(machine_builder.createTargetMachine())),
         jit_(InitLLJIT(machine_builder, host_->createDataLayout(), opts)),
-        user_queries_(jit_->createJITDylib("jitmap.user")) {}
+        user_queries_(jit_->createJITDylib("jitmap.user")),
+        options_(opts) {}
 
   void Compile(const std::string& name, const Expr& expr) {
-    auto module_ctx = ExpressionCodeGen("module_a").Compile(name, expr).Finish();
-    auto module = Optimize(AsThreadSafeModule(std::move(module_ctx)));
-    RaiseOnFailure(jit_->addIRModule(user_queries_, std::move(module)));
+    auto thread_safe_module = AsThreadSafeModule(CompileInternal(name, expr));
+    Optimize(thread_safe_module.getModule());
+    RaiseOnFailure(jit_->addIRModule(user_queries_, std::move(thread_safe_module)));
   }
 
   std::string CompileIR(const std::string& n, const Expr& e) {
-    auto module_ctx = ExpressionCodeGen("jitmap_ir").Compile(n, e).Finish();
-    auto module = std::move(module_ctx.first);
-
+    auto ctx_module = CompileInternal(n, e);
+    auto module = ctx_module.second.get();
     // By default, the TargetTriple is not part of the module. This ensure that
     // callers of `jitmap-ir` don't need to explicit the tripple in the command
     // line chain, e.g. via `opt` or `llc` utility.
     module->setTargetTriple(GetTargetTriple());
+    Optimize(module);
 
     std::string ir;
     llvm::raw_string_ostream ss{ir};
     module->print(ss, nullptr);
 
-    return ss.str();
+    return ir;
   }
 
-  DenseEvalFn LookupUserQuery(const std::string& query_name) {
-    auto symbol = ExpectOrRaise(jit_->lookup(user_queries_, query_name));
+  DenseEvalFn LookupUserQuery(const std::string& name) {
+    auto symbol = ExpectOrRaise(jit_->lookup(user_queries_, name));
     return llvm::jitTargetAddressToPointer<DenseEvalFn>(symbol.getAddress());
+  }
+
+  DenseEvalPopCountFn LookupUserPopCountQuery(const std::string& name) {
+    auto symbol = ExpectOrRaise(jit_->lookup(user_queries_, query_popcount(name)));
+    return llvm::jitTargetAddressToPointer<DenseEvalPopCountFn>(symbol.getAddress());
   }
 
   // Introspection
@@ -183,32 +193,81 @@ class JitEngineImpl {
   llvm::DataLayout layout() const { return host_->createDataLayout(); }
 
  private:
-  orc::ThreadSafeModule Optimize(orc::ThreadSafeModule thread_safe_module) {
-    auto module = thread_safe_module.getModule();
-    auto pass_manager = std::make_unique<llvm::legacy::FunctionPassManager>(module);
-    auto target_analysis = host_->getTargetIRAnalysis();
-    pass_manager->add(llvm::createTargetTransformInfoWrapperPass(target_analysis));
-    pass_manager->add(llvm::createInstructionCombiningPass());
-    pass_manager->add(llvm::createPromoteMemoryToRegisterPass());
-    pass_manager->add(llvm::createGVNPass());
-    pass_manager->add(llvm::createNewGVNPass());
-    pass_manager->add(llvm::createCFGSimplificationPass());
-    pass_manager->add(llvm::createLoopSimplifyPass());
-    pass_manager->add(llvm::createLoopVectorizePass());
-    pass_manager->add(llvm::createLoopUnrollPass());
-    pass_manager->doInitialization();
+  std::string query_popcount(const std::string query_name) {
+    return query_name + "_popcount";
+  }
 
+  ExpressionCodeGen::ContextAndModule CompileInternal(const std::string& name,
+                                                      const Expr& e) {
+    // Generate 2 variants for the expression, one function that returns the
+    // popcount, and the other that doesn't tally the popcount and returns void.
+    return ExpressionCodeGen("module_a")
+        .Compile(name, e, false /* with_popcount */)
+        .Compile(query_popcount(name), e, true /* with_popcount */)
+        .Finish();
+  }
+
+  llvm::Module* Optimize(llvm::Module* module) {
+    unsigned opt_level = options_.optimization_level;
+    // Don't optimize for size.
+    unsigned size_level = 0;
+
+    llvm::PassManagerBuilder builder;
+    builder.OptLevel = opt_level;
+    builder.SizeLevel = size_level;
+
+    builder.Inliner = llvm::createFunctionInliningPass(opt_level, size_level, false);
+    builder.LoopVectorize = true;
+    builder.SLPVectorize = true;
+    builder.DisableUnrollLoops = false;
+    host_->adjustPassManager(builder);
+
+    auto cpu = host_->getTargetCPU();
     for (auto& function : *module) {
-      pass_manager->run(function);
+      setFunctionAttributes("target-cpu", cpu, function);
     }
 
-    return thread_safe_module;
+    llvm::legacy::FunctionPassManager fn_manager{module};
+    auto host_analysis = host_->getTargetIRAnalysis();
+    fn_manager.add(llvm::createTargetTransformInfoWrapperPass(host_analysis));
+    builder.populateFunctionPassManager(fn_manager);
+
+    fn_manager.add(
+        llvm::createLoopUnrollPass(2, /*OnlyWhenForced*/ false, false, -1, 4, 1));
+
+    fn_manager.doInitialization();
+    for (auto& function : *module) {
+      fn_manager.run(function);
+    }
+    fn_manager.doFinalization();
+
+    llvm::legacy::PassManager mod_manager;
+    auto& llvm_host = dynamic_cast<llvm::LLVMTargetMachine&>(*host_);
+    mod_manager.add(llvm_host.createPassConfig(mod_manager));
+    builder.populateModulePassManager(mod_manager);
+
+    mod_manager.run(*module);
+
+    return module;
+  }
+
+  void setFunctionAttributes(const std::string& attr, const std::string& val,
+                             llvm::Function& fn) {
+    llvm::AttrBuilder new_attrs;
+    if (!val.empty() && !fn.hasFnAttribute(attr)) {
+      new_attrs.addAttribute(attr, val);
+    }
+
+    constexpr auto fn_index = llvm::AttributeList::FunctionIndex;
+    auto attrs = fn.getAttributes();
+    fn.setAttributes(attrs.addAttributes(fn.getContext(), fn_index, new_attrs));
   }
 
  private:
   std::unique_ptr<llvm::TargetMachine> host_;
   std::unique_ptr<orc::LLJIT> jit_;
   orc::JITDylib& user_queries_;
+  CompilerOptions options_;
 };
 
 JitEngine::JitEngine(CompilerOptions opts)
@@ -230,6 +289,10 @@ std::string JitEngine::CompileIR(const std::string& name, const Expr& expression
 
 DenseEvalFn JitEngine::LookupUserQuery(const std::string& query_name) {
   return impl().LookupUserQuery(query_name);
+}
+
+DenseEvalPopCountFn JitEngine::LookupUserPopCountQuery(const std::string& query_name) {
+  return impl().LookupUserPopCountQuery(query_name);
 }
 
 }  // namespace query

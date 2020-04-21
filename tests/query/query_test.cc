@@ -16,6 +16,7 @@
 
 #include <jitmap/query/compiler.h>
 #include <jitmap/query/query.h>
+#include <jitmap/util/aligned.h>
 
 namespace jitmap {
 namespace query {
@@ -65,8 +66,8 @@ TEST_F(QueryExecTest, variables) {
 }
 
 TEST_F(QueryExecTest, EvalInvalidParameters) {
-  std::vector<char> a(kBytesPerContainer, 0x00);
-  std::vector<char> result(kBytesPerContainer, 0x00);
+  aligned_array<char, kBytesPerContainer> a(0x00);
+  aligned_array<char, kBytesPerContainer> result(0x00);
   std::vector<const char*> inputs{};
 
   auto not_a = Query::Make("invalid_param", "!a", &ctx);
@@ -78,9 +79,9 @@ TEST_F(QueryExecTest, EvalInvalidParameters) {
 }
 
 TEST_F(QueryExecTest, Eval) {
-  std::vector<char> a(kBytesPerContainer, 0x00);
-  std::vector<char> b(kBytesPerContainer, 0xFF);
-  std::vector<char> result(kBytesPerContainer, 0x00);
+  aligned_array<char, kBytesPerContainer> a(0x00);
+  aligned_array<char, kBytesPerContainer> b(0xFF);
+  aligned_array<char, kBytesPerContainer> result(0x00);
   std::vector<const char*> inputs{};
 
   auto not_a = Query::Make("single_param", "!a", &ctx);
@@ -96,15 +97,14 @@ TEST_F(QueryExecTest, Eval) {
   EXPECT_THAT(result, testing::Each(0x00));
 
   // It can runs with the same input twice.
-  inputs = {b.data(), b.data()};
-  a_and_b->Eval(inputs, result.data());
+  a_and_b->Eval({b.data(), b.data()}, result.data());
   EXPECT_THAT(result, testing::Each(0xFF));
 }
 
 using MissingPolicy = EvaluationContext::MissingPolicy;
 
 TEST_F(QueryExecTest, EvalWithMissingPolicy) {
-  std::vector<char> result(kBytesPerContainer, 0x00);
+  aligned_array<char, kBytesPerContainer> result(0x00);
   std::vector<const char*> inputs{nullptr};
 
   auto q = Query::Make("another_not_a", "!a", &ctx);
@@ -119,6 +119,26 @@ TEST_F(QueryExecTest, EvalWithMissingPolicy) {
   eval_ctx.set_missing_policy(MissingPolicy::REPLACE_WITH_FULL);
   q->Eval(eval_ctx, inputs, result.data());
   EXPECT_THAT(result, testing::Each(0x00));
+}
+
+TEST_F(QueryExecTest, EvalWithPopCount) {
+  aligned_array<char, kBytesPerContainer> a(0x00);
+  aligned_array<char, kBytesPerContainer> result(0x00);
+  std::vector<const char*> inputs{a.data()};
+
+  auto q = Query::Make("yet_not_a", "!a", &ctx);
+
+  EvaluationContext eval_ctx;
+  EXPECT_EQ(q->Eval(eval_ctx, inputs, result.data()), kUnknownPopCount);
+
+  eval_ctx.set_popcount(true);
+  EXPECT_EQ(q->Eval(eval_ctx, inputs, result.data()), kBitsPerContainer);
+
+  a.fill(0b00001111);
+  EXPECT_EQ(q->Eval(eval_ctx, inputs, result.data()), kBitsPerContainer / 2);
+
+  a.fill(~0b00000001);
+  EXPECT_EQ(q->Eval(eval_ctx, inputs, result.data()), kBitsPerContainer / 8);
 }
 
 }  // namespace query

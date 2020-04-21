@@ -29,12 +29,11 @@ namespace query {
 
 class QueryImpl {
  public:
-  QueryImpl(std::string name, std::string query, ExecutionContext* context)
+  QueryImpl(std::string name, std::string query)
       : name_(std::move(name)),
         query_(std::move(query)),
         expr_(Parse(query_, &builder_)),
         optimized_expr_(Optimizer(&builder_).Optimize(*expr_)),
-        context_(context),
         variables_(expr_->Variables()) {}
 
   // Accessors
@@ -44,7 +43,8 @@ class QueryImpl {
   const Expr& optimized_expr() const { return *optimized_expr_; }
   const std::vector<std::string>& variables() const { return variables_; }
 
-  DenseEvalFn dense_eval_fn() const { return context_->jit()->LookupUserQuery(name()); }
+  DenseEvalFn dense_eval_fn() const { return dense_eval_fn_; }
+  DenseEvalPopCountFn dense_eval_popct_fn() const { return dense_eval_popct_fn_; }
 
  private:
   std::string name_;
@@ -52,9 +52,12 @@ class QueryImpl {
   ExprBuilder builder_;
   Expr* expr_;
   Expr* optimized_expr_;
-  ExecutionContext* context_;
+
+  friend class Query;
 
   std::vector<std::string> variables_;
+  DenseEvalFn dense_eval_fn_ = nullptr;
+  DenseEvalPopCountFn dense_eval_popct_fn_ = nullptr;
 };
 
 static inline void ValidateQueryName(const std::string& name) {
@@ -79,7 +82,7 @@ static inline void ValidateQueryName(const std::string& name) {
 }
 
 Query::Query(std::string name, std::string query, ExecutionContext* context)
-    : Pimpl(std::make_unique<QueryImpl>(std::move(name), std::move(query), context)) {}
+    : Pimpl(std::make_unique<QueryImpl>(std::move(name), std::move(query))) {}
 
 std::shared_ptr<Query> Query::Make(const std::string& name, const std::string& expr,
                                    ExecutionContext* context) {
@@ -91,6 +94,10 @@ std::shared_ptr<Query> Query::Make(const std::string& name, const std::string& e
   auto query = std::shared_ptr<Query>(new Query(name, expr, context));
   context->jit()->Compile(query->name(), query->expr());
 
+  // Cache functions
+  query->impl().dense_eval_fn_ = context->jit()->LookupUserQuery(name);
+  query->impl().dense_eval_popct_fn_ = context->jit()->LookupUserPopCountQuery(name);
+
   return query;
 }
 
@@ -99,14 +106,14 @@ const Expr& Query::expr() const { return impl().expr(); }
 const std::vector<std::string>& Query::variables() const { return impl().variables(); }
 
 template <char FillByte>
-class array_bitmap : public std::array<char, kBytesPerContainer> {
+class StaticArray : public std::array<char, kBytesPerContainer> {
  public:
-  array_bitmap() { fill(FillByte); }
+  StaticArray() noexcept : array() { fill(FillByte); }
 };
 
 // Private read-only full and empty bitmap. Used for EvaluationContext::MissingPolicy;
-static const array_bitmap<static_cast<char>(0x00)> kEmptyBitmap;
-static const array_bitmap<static_cast<char>(0xFF)> kFullBitmap;
+static const StaticArray<static_cast<char>(0x00)> kEmptyBitmap;
+static const StaticArray<static_cast<char>(0xFF)> kFullBitmap;
 
 using MissingPolicy = EvaluationContext::MissingPolicy;
 
@@ -129,8 +136,8 @@ static inline const char* CoalesceInputPointer(const char* input,
   throw Exception("Unreachable in ", __FUNCTION__);
 }
 
-void Query::Eval(const EvaluationContext& eval_ctx, std::vector<const char*> inputs,
-                 char* output) {
+int32_t Query::Eval(const EvaluationContext& eval_ctx, std::vector<const char*> inputs,
+                    char* output) {
   auto vars = variables();
 
   JITMAP_PRE_EQ(vars.size(), inputs.size());
@@ -138,16 +145,36 @@ void Query::Eval(const EvaluationContext& eval_ctx, std::vector<const char*> inp
 
   auto policy = eval_ctx.missing_policy();
   for (size_t i = 0; i < inputs.size(); i++) {
-    inputs[i] = CoalesceInputPointer(inputs[i], vars[i], policy);
+    if (inputs[i] == nullptr) {
+      inputs[i] = CoalesceInputPointer(inputs[i], vars[i], policy);
+    }
+  }
+
+  if (eval_ctx.popcount()) {
+    auto eval_fn = impl().dense_eval_popct_fn();
+    return eval_fn(inputs.data(), output);
   }
 
   auto eval_fn = impl().dense_eval_fn();
   eval_fn(inputs.data(), output);
+  return kUnknownPopCount;
 }
 
-void Query::Eval(std::vector<const char*> inputs, char* output) {
+int32_t Query::Eval(std::vector<const char*> inputs, char* output) {
   EvaluationContext ctx;
-  Eval(ctx, std::move(inputs), output);
+  return Eval(ctx, std::move(inputs), output);
+}
+
+int32_t Query::EvalUnsafe(const EvaluationContext& eval_ctx,
+                          std::vector<const char*>& inputs, char* output) {
+  if (eval_ctx.popcount()) {
+    auto eval_fn = impl().dense_eval_popct_fn();
+    return eval_fn(inputs.data(), output);
+  }
+
+  auto eval_fn = impl().dense_eval_fn();
+  eval_fn(inputs.data(), output);
+  return kUnknownPopCount;
 }
 
 }  // namespace query

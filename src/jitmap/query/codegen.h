@@ -93,18 +93,20 @@ class ExpressionCodeGen {
         module_(std::make_unique<llvm::Module>(module_name, *ctx_)),
         builder_(*ctx_) {}
 
-  ExpressionCodeGen& Compile(const std::string& name, const Expr& expression) {
-    FunctionDeclForQuery(name, expression);
+  ExpressionCodeGen& Compile(const std::string& name, const Expr& expression,
+                             bool with_popcount = true) {
+    auto fn = FunctionDeclForQuery(name, expression, with_popcount);
+    FunctionCodeGen(expression, with_popcount, fn);
     return *this;
   }
 
-  using ModuleAndContext =
-      std::pair<std::unique_ptr<llvm::Module>, std::unique_ptr<llvm::LLVMContext>>;
+  using ContextAndModule =
+      std::pair<std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>>;
 
-  ModuleAndContext Finish() { return {std::move(module_), std::move(ctx_)}; }
+  ContextAndModule Finish() { return {std::move(ctx_), std::move(module_)}; }
 
  private:
-  void FunctionCodeGen(const Expr& expression, llvm::Function* fn) {
+  void FunctionCodeGen(const Expr& expression, bool with_popcount, llvm::Function* fn) {
     auto entry_block = llvm::BasicBlock::Create(*ctx_, "entry", fn);
     builder_.SetInsertPoint(entry_block);
 
@@ -113,13 +115,16 @@ class ExpressionCodeGen {
     auto [inputs, output] = UnrollInputsOutput(variables.size(), fn);
 
     // Constants
-    auto induction_type = llvm::Type::getInt64Ty(*ctx_);
-    auto zero = llvm::ConstantInt::get(induction_type, 0);
-    auto step = llvm::ConstantInt::get(induction_type, 1);
-    auto n_words = llvm::ConstantInt::get(induction_type, words());
+    auto i64 = llvm::Type::getInt64Ty(*ctx_);
+    auto zero = llvm::ConstantInt::get(i64, 0);
+    auto step = llvm::ConstantInt::get(i64, 1);
+    auto n_words = llvm::ConstantInt::get(i64, words());
 
     auto loop_block = llvm::BasicBlock::Create(*ctx_, "loop", fn);
     auto after_block = llvm::BasicBlock::Create(*ctx_, "after_loop", fn);
+
+    llvm::PHINode* acc = nullptr;
+    llvm::Value* next_acc = nullptr;
 
     builder_.CreateBr(loop_block);
     builder_.SetInsertPoint(loop_block);
@@ -130,13 +135,28 @@ class ExpressionCodeGen {
     // }
     {
       // Define the `i` induction variable and initialize it to zero.
-      auto i = builder_.CreatePHI(induction_type, 2, "i");
+      auto i = builder_.CreatePHI(i64, 2, "i");
       i->addIncoming(zero, entry_block);
 
-      LoopBodyCodeGen(expression, variables, inputs, output, i);
+      if (with_popcount) {
+        // Initialize an accumulator for popcount.
+        auto zero_elem = llvm::ConstantInt::get(ElementType(), 0);
+        auto zero_vec = llvm::ConstantVector::getSplat(vector_width(), zero_elem);
+        acc = builder_.CreatePHI(VectorType(), 2, "acc");
+        acc->addIncoming(zero_vec, entry_block);
+      }
+
+      auto result = LoopBodyCodeGen(expression, variables, inputs, output, i);
+
+      if (with_popcount) {
+        auto popcnt = PopCount(result);
+        next_acc = builder_.CreateAdd(acc, popcnt, "next_acc");
+        acc->addIncoming(next_acc, loop_block);
+      }
 
       // i += step
       auto next_i = builder_.CreateAdd(i, step, "next_i");
+
       // if (`i` == n_words) break;
       auto exit_cond = builder_.CreateICmpEQ(next_i, n_words, "exit_cond");
       builder_.CreateCondBr(exit_cond, after_block, loop_block);
@@ -144,7 +164,23 @@ class ExpressionCodeGen {
     }
 
     builder_.SetInsertPoint(after_block);
-    builder_.CreateRetVoid();
+    // Return the horizontal sum of the vector accumulator.
+    if (with_popcount) {
+      builder_.CreateRet(ReduceAdd(next_acc));
+    } else {
+      builder_.CreateRetVoid();
+    }
+  }
+
+  llvm::Value* PopCount(llvm::Value* val) {
+    // See https://reviews.llvm.org/D10084
+    constexpr auto ctpop = llvm::Intrinsic::ctpop;
+    return builder_.CreateUnaryIntrinsic(ctpop, val, nullptr, "popcnt");
+  }
+
+  llvm::Value* ReduceAdd(llvm::Value* val) {
+    constexpr auto horizontal_add = llvm::Intrinsic::experimental_vector_reduce_add;
+    return builder_.CreateUnaryIntrinsic(horizontal_add, val, nullptr, "hsum");
   }
 
   std::pair<std::vector<llvm::Value*>, llvm::Value*> UnrollInputsOutput(
@@ -158,7 +194,8 @@ class ExpressionCodeGen {
       auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
       auto bitmap_i = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx_), i);
       auto gep = builder_.CreateInBoundsGEP(inputs_ptr, bitmap_i, namify("bitmap_gep"));
-      return builder_.CreateLoad(gep, namify("bitmap"));
+      auto addr = builder_.CreateLoad(gep, namify("bitmap"));
+      return builder_.CreatePointerCast(addr, VectorPtrType(), namify("bitmap_vec"));
     };
 
     std::vector<llvm::Value*> inputs;
@@ -166,12 +203,15 @@ class ExpressionCodeGen {
       inputs.push_back(load_bitmap(i));
     }
 
-    return {inputs, output_ptr};
+    auto output_vec_ptr =
+        builder_.CreatePointerCast(output_ptr, VectorPtrType(), "output_vec");
+    return {inputs, output_vec_ptr};
   }
 
-  void LoopBodyCodeGen(const Expr& expression, const std::vector<std::string>& variables,
-                       std::vector<llvm::Value*> inputs, llvm::Value* output,
-                       llvm::Value* loop_idx) {
+  llvm::Value* LoopBodyCodeGen(const Expr& expression,
+                               const std::vector<std::string>& variables,
+                               std::vector<llvm::Value*> inputs, llvm::Value* output,
+                               llvm::Value* loop_idx) {
     // Load scalar at index for given bitmap
     auto load_vector_inst = [&](auto bitmap_addr, size_t i) {
       auto namify = [&i](std::string key) { return key + "_" + std::to_string(i); };
@@ -189,31 +229,36 @@ class ExpressionCodeGen {
     }
 
     // Execute the expression tree on the input
-    ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, ElementType()};
+    ExprCodeGenVisitor visitor{keyed_bitmaps, builder_, VectorType()};
     auto result = expression.Visit(visitor);
 
     // Store the result in the output bitmap.
     auto gep = builder_.CreateInBoundsGEP(output, {loop_idx}, "gep_output");
-    auto bitcast = builder_.CreateBitCast(gep, ElementPtrType(), "bitcast_output");
+    auto bitcast = builder_.CreateBitCast(gep, VectorPtrType(), "bitcast_output");
     builder_.CreateStore(result, bitcast);
+
+    return result;
   }
 
-  llvm::FunctionType* FunctionTypeForArguments() {
+  llvm::FunctionType* FunctionTypeForArguments(bool with_popcount) {
     // void
-    auto return_type = llvm::Type::getVoidTy(*ctx_);
+    auto return_type = with_popcount ? ElementType() : llvm::Type::getVoidTy(*ctx_);
+    auto i8 = llvm::Type::getInt8Ty(*ctx_);
+    auto i8_ptr = i8->getPointerTo();
     // dense_fn(
-    // const int32_t** inputs,
-    auto inputs_type = ElementPtrType()->getPointerTo();
-    // int32_t* output,
-    auto output_type = ElementPtrType();
+    // const int8_t** inputs,
+    auto inputs_type = i8_ptr->getPointerTo();
+    // int8_t* output,
+    auto output_type = i8_ptr;
     // )
 
     constexpr bool is_var_args = false;
     return llvm::FunctionType::get(return_type, {inputs_type, output_type}, is_var_args);
   }
 
-  llvm::Function* FunctionDeclForQuery(const std::string& name, const Expr& expression) {
-    auto fn_type = FunctionTypeForArguments();
+  llvm::Function* FunctionDeclForQuery(const std::string& name, const Expr& expression,
+                                       bool with_popcount) {
+    auto fn_type = FunctionTypeForArguments(with_popcount);
     // The generated function will be exposed as an external symbol, i.e the
     // symbol will be globally visible. This would be equivalent to defining a
     // symbol with the `extern` storage classifier.
@@ -239,16 +284,21 @@ class ExpressionCodeGen {
     output->setName("output");
     output->addAttr(llvm::Attribute::NoCapture);
 
-    FunctionCodeGen(expression, fn);
-
     return fn;
   }
 
   llvm::Type* ElementType() { return llvm::Type::getIntNTy(*ctx_, scalar_width()); }
-  llvm::Type* ElementPtrType() { return ElementType()->getPointerTo(); }
 
-  uint8_t scalar_width() const { return sizeof(char) * CHAR_BIT; }
-  uint32_t words() const { return kBitsPerContainer / scalar_width(); }
+  llvm::VectorType* VectorType() {
+    return llvm::VectorType::get(ElementType(), vector_width());
+  }
+  llvm::Type* VectorPtrType() { return VectorType()->getPointerTo(); }
+
+  uint32_t scalar_width() const { return 32; }
+  uint32_t vector_width() const { return 16; }
+  uint32_t unroll() const { return 4; }
+
+  uint32_t words() const { return kBitsPerContainer / (scalar_width() * vector_width()); }
 
   std::unique_ptr<llvm::LLVMContext> ctx_;
   std::unique_ptr<llvm::Module> module_;

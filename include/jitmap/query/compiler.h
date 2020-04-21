@@ -37,6 +37,7 @@ class CompilerException : public Exception {
 
 // Signature of generated functions
 typedef void (*DenseEvalFn)(const char**, char*);
+typedef int32_t (*DenseEvalPopCountFn)(const char**, char*);
 
 struct CompilerOptions {
   // Controls LLVM optimization level (-O0, -O1, -O2, -O3). Anything above 3
@@ -97,6 +98,7 @@ class JitEngine : util::Pimpl<JitEngineImpl> {
 
   // Lookup a query
   DenseEvalFn LookupUserQuery(const std::string& query_name);
+  DenseEvalPopCountFn LookupUserPopCountQuery(const std::string& query_name);
 
   // Return the LLVM name for the host CPU.
   //

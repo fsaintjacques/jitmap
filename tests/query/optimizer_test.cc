@@ -20,6 +20,10 @@ namespace jitmap {
 namespace query {
 
 class OptimizationTest : public QueryTest {
+ public:
+  Expr* e = Var("e");
+  Expr* f = Or(And(Var("a"), Not(Var("b"))), Var("c"));
+
  protected:
   void ExpectOpt(OptimizationPass& p, Expr* input, Expr* expected) {
     ExprEq(p(input), expected);
@@ -28,9 +32,6 @@ class OptimizationTest : public QueryTest {
   void ExpectOpt(Optimizer& o, Expr* input, Expr* expected) {
     ExprEq(o.Optimize(*input), expected);
   }
-
-  Expr* e = Var("e");
-  Expr* f = Or(And(Var("a"), Not(Var("b"))), Var("c"));
 };
 
 TEST_F(OptimizationTest, ConstantFolding) {

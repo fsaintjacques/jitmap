@@ -19,6 +19,7 @@
 #include <jitmap/query/compiler.h>
 #include <jitmap/query/parser.h>
 #include <jitmap/util/compiler.h>
+#include <jitmap/util/aligned.h>
 
 namespace jitmap {
 namespace query {
@@ -35,7 +36,7 @@ class JitTest : public QueryTest {
     auto variables = query->variables();
     EXPECT_EQ(inputs.size(), variables.size());
 
-    std::vector<char> output(kBytesPerContainer, 0UL);
+    aligned_array<char, kBytesPerContainer> output;
     EXPECT_THAT(output, testing::Each(0UL));
 
     query->Eval(std::move(inputs), output.data());
@@ -45,16 +46,18 @@ class JitTest : public QueryTest {
  private:
   std::string query_name() { return "query_" + std::to_string(id++); }
 
-  std::tuple<std::vector<std::vector<char>>, std::vector<const char*>> InitInputs(
-      std::vector<char> input_words) {
+  std::tuple<std::vector<aligned_array<char, kBytesPerContainer>>,
+             std::vector<const char*>>
+  InitInputs(std::vector<char> input_words) {
     size_t n_bitmaps = input_words.size();
 
-    std::vector<std::vector<char>> bitmaps(n_bitmaps);
+    std::vector<aligned_array<char, kBytesPerContainer>> bitmaps(n_bitmaps);
     std::vector<const char*> inputs(n_bitmaps);
     for (size_t i = 0; i < n_bitmaps; i++) {
       auto repeated_word = input_words[i];
-      bitmaps[i] = std::vector<char>(kBytesPerContainer, repeated_word);
-      inputs[i] = bitmaps[i].data();
+      auto& bitmap = bitmaps[i];
+      std::fill(bitmap.begin(), bitmap.end(), repeated_word);
+      inputs[i] = bitmap.data();
       EXPECT_THAT(bitmaps[i], testing::Each(repeated_word));
     }
 
