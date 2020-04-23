@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>jitmap: Execution engine for bitmaps</title>
+    <meta charset="utf-8">
+    <style>
+      @import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+      @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body { font-family: 'Droid Serif'; }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz';
+        font-weight: normal;
+      }
+      .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono'; }
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+class: center, middle
+
+# jitmap: Execution engine for bitmaps
+
+---
+
+# Problem
+
+* *Input*:  `n` bitmaps and a logical expression (query) on said bitmaps.
+
+* *Output*:  bitmap where the expression is applied element-wise at each bit
+position.
+
+```javascript
+// Each value is a densely packed bitmap in memory of size 2^k. It represent
+// documents (or rules) in which the word (or attribute) is found.
+let reverse_index = {
+  'cat': [1,1,0,0,...,0],
+  'dog': [0,1,1,0,...,0],
+  ...,
+  'yak': [0,1,0,0,...,1]
+};
+
+// The query is known at runtime from the perspective of the compiler, e.g. it
+// can be extracted from a configuration file, an SQL query's `WHERE` clause,
+// R's dplyr `filter` verb, etc...
+let query = "(dog ^ cat) | yak";
+
+// [1,1,1,0,...,1]
+let result = engine.execute(query, reverse_index);
+do_something(result);
+```
+---
+
+# Applications / Problem modeling
+
+* *search engines*: posting lists (sorted sequences of integers) are encoded
+  with bitmaps. Evaluating a search query (logical expression on
+  keywords) can be implemented with logical expression on bitmaps.
+
+* *columnar databases*: selection vectors (index masks), the results of
+  predicate on column expressions, can be encoded with bitmaps. Bitmaps are
+  also used for index of low cardinality categorical columns and/or cached
+  selection vectors (database cracking).
+
+  ``` SQL
+  SELECT SUM(a) FROM t WHERE b > 0 AND color = 'red';
+  -- int64_t acc = 0;
+  -- for (size_t i = 0; i < len; i++)
+  --   acc += mask_bitmap[i] ? a[i] : 0;
+  -- return acc;
+  ```
+
+* *stream processing systems*: e.g. adtech bid requests filtering with campaign
+  rules, bitmaps can be used as a first-pass optimization to lower the number of
+  (costly) rules to evaluate on each incoming event.
+
+* Software that use bitmaps internally, Apache Lucene, Apache Druid, Apache
+  Spark, ClickHouse, ...
+
+---
+
+# jitmap: DSL-as-a-library
+
+```C
+// jitmap compiles an expression returned as a function pointer. The function
+// can be called from any thread in the same address space and has a global
+// lifetime.
+
+// Function pointer that evaluates a defined expression on bitmaps of size
+// `kBitsPerBitmap`. The static size restriction is due to lack of development
+// time.
+typedef int32_t (*dense_eval_fn)(const char**, char*);
+
+/// The name of the symbol, exposed to gdb and linux's perf.
+const char* symbol_name = "query_a_and_b_and_c";
+/// The query as a tiny DSL explained later.
+const char* query = "a & b & c";
+/// Optionally tally the popcount in the generated function.
+bool with_popcnt = true;
+dense_eval_fn a_and_b_and_c = jitmap_compile(symbol_name, query, with_popcnt);
+
+// a, b, c, and output are pointers to bitmap.
+char* a, b, c, output;
+const char* inputs[3] = {a, b, c};
+
+// The result of `a & b & c` will be stored in `output`, applied vertically
+// using vectorized instruction available on the host.
+int32_t output_popcnt = a_and_b_and_c(inputs, output);
+
+```
+
+---
+
+# Domain specific language
+
+jitmap offers a small DSL language to evaluate bitwise operations on bitmaps.
+The language supports variables (named bitmap), empty/full literals, and basic
+operators.
+
+## Supported expressions
+
+```abnf
+literal   = "$0" / "$1"
+symbol    = 1*(ALPHA / DIGIT / "_")
+unary     = "!" expr
+binary    = expr ('&' / '|' / '^') expr
+paren     = '(' expr ')'
+expr      = literal / symbol / unary / binary / paren
+
+; Some examples:
+; !a
+; (a & b)
+; ($1 & (a | b) ^ (!a ^ (c & !d)))
+```
+
+---
+
+# Implementation
+
+* c++17 library statically linked with LLVM >= 9.0 using ORCJit
+
+* Trivial pre-optimization passes on the AST, e.g. constant folding,
+  operators simplification, trivial form of common subexpression elimation.
+
+* Vectorization and loop fusion is performed by the frontend (jitmap), i.e.
+  generates a loop that iterates over words where the logical expression AST
+  is applied on each word.
+
+* Optionally fuses a popcount accumulator in the loop with
+  [Faster Population Counts Using AVX2 Instructions](https://arxiv.org/pdf/1611.07612.pdf)
+
+* `jitmap-ir <query>` command line utility dumps LLVM IR to stdout
+
+---
+
+# Generated code
+
+```x86asm
+# query: `(a & b) ^ (c & !d)`
+...
+.LBB0_1:                                # %loop
+                                        # =>This Inner Loop Header: Depth=1
+        # a=rcx, b=r8, c=rdi, d=rdx, output=rsi
+        vmovaps zmm0, zmmword ptr [rcx + rax]
+        vmovaps zmm1, zmmword ptr [rdi + rax]
+        vandps  zmm0, zmm0, zmmword ptr [r8 + rax]
+        vandnps zmm1, zmm1, zmmword ptr [rdx + rax]
+        vxorps  zmm0, zmm1, zmm0
+        vmovaps zmmword ptr [rsi + rax], zmm0
+        # Unrolling performed by LLVM
+        vmovaps zmm0, zmmword ptr [rcx + rax + 64]
+        vmovaps zmm1, zmmword ptr [rdi + rax + 64]
+        vandps  zmm0, zmm0, zmmword ptr [r8 + rax + 64]
+        vandnps zmm1, zmm1, zmmword ptr [rdx + rax + 64]
+        vxorps  zmm0, zmm1, zmm0
+        vmovaps zmmword ptr [rsi + rax + 64], zmm0
+        sub     rax, -128
+        cmp     rax, 8192
+        jne     .LBB0_1
+...
+```
+---
+
+![benchmark](benchmark.png)
+
+---
+
+# Future
+
+* Extend execution engine to support all RoaringBitmap compression scheme, e.g.
+  dense, array, and RLE.
+
+* Unstall LLVM [Tree-Height-Reduction](https://reviews.llvm.org/D67383) pass
+
+```x86asm
+# query: `a & b & c & d & e & f & g & h`
+.loop:                                  # %loop
+                                        # =>This Inner Loop Header: Depth=1
+        vmovaps zmm0, zmmword ptr [r9 + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [r8 + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [r10 + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [r11 + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [rcx + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [rdx + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [rax + rbx]
+        vandps  zmm0, zmm0, zmmword ptr [rdi + rbx]
+        vmovaps zmmword ptr [rsi + rbx], zmm0
+        add     rbx, 64
+        cmp     rbx, 8192
+        jne     .loop
+```
+
+* Experiment with LLVM optimizations knobs, especially controlling the unrolling
+  window.
+
+    </textarea>
+    <script src="remark-latest.min.js">
+    </script>
+    <script>
+      var slideshow = remark.create({
+        highlightStyle: 'monokai-sublime'
+      });
+    </script>
+  </body>
+</html>
